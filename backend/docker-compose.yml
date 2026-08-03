@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: guardianmail_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - guardianmail_net
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: guardianmail_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - guardianmail_net
+
+  api:
+    build: .
+    container_name: guardianmail_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/workspace
+    environment:
+      - MONGODB_URL=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - SECRET_KEY=changesupersecretinproduction2026!
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - guardianmail_net
+
+  celery_worker:
+    build: .
+    container_name: guardianmail_worker
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info
+    volumes:
+      - .:/workspace
+    environment:
+      - MONGODB_URL=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - SECRET_KEY=changesupersecretinproduction2026!
+    depends_on:
+      - redis
+      - mongo
+    networks:
+      - guardianmail_net
+
+volumes:
+  mongo_data:
+
+networks:
+  guardianmail_net:
+    driver: bridge

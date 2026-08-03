@@ -1,0 +1,1 @@
+# GuardianMail AI Constants Package
