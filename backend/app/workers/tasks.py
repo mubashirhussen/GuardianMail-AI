@@ -482,4 +482,94 @@ def refresh_analytics_cache_task() -> dict:
         logger.error(f"Refresh analytics cache failed: {str(exc)}")
         return {"status": "failed", "error": str(exc)}
 
+async def _ingest_threat_feed_async(feed_id: str) -> dict:
+    from app.database.connection import db_manager
+    from bson import ObjectId
+    from app.services.threat_correlation import threat_correlation_service
+    from datetime import datetime, timezone
+    
+    if db_manager.db is None:
+        await db_manager.connect()
+        
+    feed = await db_manager.db["threat_feeds"].find_one({"_id": ObjectId(feed_id)})
+    if not feed:
+        return {"status": "failed", "reason": "Feed not found"}
+        
+    provider = feed.get("provider")
+    org_id = feed.get("organization_id")
+    
+    # Simulate fetching indicators from provider
+    mock_iocs = []
+    if provider == "urlhaus":
+        mock_iocs = [
+            ("url", "http://malicious-test-haus.com/payload.exe", ["malware", "test-urlhaus"]),
+            ("url", "http://phish-test-haus.com/login.html", ["phishing", "test-urlhaus"])
+        ]
+    elif provider == "abuseipdb":
+        mock_iocs = [
+            ("ipv4", "99.99.99.99", ["botnet", "abuseipdb"]),
+            ("ipv4", "1.2.3.4", ["malicious", "abuseipdb"])
+        ]
+    elif provider == "virustotal":
+        mock_iocs = [
+            ("domain", "malicious-domain-vt.com", ["stealer", "vt"]),
+            ("file_hash", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", ["malware", "vt"])
+        ]
+    else:
+        mock_iocs = [
+            ("domain", "generic-malicious-intel.com", ["generic", "fallback"])
+        ]
+        
+    ingested_count = 0
+    for ioc_type, val, tags in mock_iocs:
+        await threat_correlation_service.ingest_indicator(
+            indicator_type=ioc_type,
+            indicator_value=val,
+            source=provider,
+            organization_id=org_id,
+            tags=tags,
+            description=f"Auto-ingested from {feed.get('feed_name')}"
+        )
+        ingested_count += 1
+        
+    await db_manager.db["threat_feeds"].update_one(
+        {"_id": ObjectId(feed_id)},
+        {"$set": {"last_fetched_at": datetime.now(timezone.utc), "status": "healthy"}}
+    )
+    
+    return {"status": "success", "ingested": ingested_count}
+
+@celery_app.task(name="tasks.ingest_threat_feed_task")
+def ingest_threat_feed_task(feed_id: str) -> dict:
+    """Ingests threat intelligence feed indicators and processes them asynchronously."""
+    try:
+        return run_async(_ingest_threat_feed_async(feed_id))
+    except Exception as exc:
+        logger.error(f"Feed ingestion failed for {feed_id}: {str(exc)}")
+        return {"status": "failed", "error": str(exc)}
+
+async def _expire_iocs_async() -> dict:
+    from app.database.connection import db_manager
+    from datetime import datetime, timezone
+    
+    if db_manager.db is None:
+        await db_manager.connect()
+        
+    now = datetime.now(timezone.utc)
+    result = await db_manager.db["threat_indicators"].update_many(
+        {"expires_at": {"$lt": now}, "status": "ACTIVE"},
+        {"$set": {"status": "EXPIRED", "updated_at": now}}
+    )
+    return {"status": "success", "expired_count": result.modified_count}
+
+@celery_app.task(name="tasks.expire_iocs_task")
+def expire_iocs_task() -> dict:
+    """Periodically marks threat indicators as expired based on TTL configurations."""
+    try:
+        return run_async(_expire_iocs_async())
+    except Exception as exc:
+        logger.error(f"IOC expiration task failed: {str(exc)}")
+        return {"status": "failed", "error": str(exc)}
+
+
 

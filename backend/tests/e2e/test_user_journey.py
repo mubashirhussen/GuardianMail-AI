@@ -17,7 +17,7 @@ def test_complete_analyst_user_journey(page: Page):
     page.locator("input[type='password']").fill("VerySecurePassword123!")
     
     # 4. Click login submit button
-    page.get_by_role("button", { "name": /Sign In to Console/i }).click()
+    page.get_by_role("button", name=re.compile("Sign In to Console", re.IGNORECASE)).click()
     
     # 5. Assert redirection to Main Dashboard
     expect(page).to_have_url(re.compile(r"/"))
@@ -28,13 +28,13 @@ def test_complete_analyst_user_journey(page: Page):
     expect(page.locator("text=Active Incident Cases")).to_be_visible()
     
     # 7. Navigate to Email Inbox Forensics page
-    page.get_by_role("link", { "name": /Email Scans/i }).click()
+    page.get_by_role("link", name=re.compile("Email Scans", re.IGNORECASE)).click()
     expect(page).to_have_url(re.compile(r"/emails"))
     
     # 8. Access Profile details setting
-    page.get_by_role("link", { "name": /Profile/i }).click()
+    page.get_by_role("link", name=re.compile("Profile", re.IGNORECASE)).click()
     expect(page).to_have_url(re.compile(r"/profile"))
     
     # 9. Trigger logout
-    page.get_by_role("button", { "name": /Logout/i }).click()
+    page.get_by_role("button", name=re.compile("Logout", re.IGNORECASE)).click()
     expect(page).to_have_url(re.compile(r"/login"))

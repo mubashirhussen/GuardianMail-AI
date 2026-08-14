@@ -9,6 +9,10 @@ from app.repositories.user_repo import UserRepository
 from app.repositories.device_repo import DeviceRepository
 from app.exceptions.custom import AuthError, TokenExpiredError
 
+from app.repositories.identity_provider_repo import IdentityProviderRepository
+from app.repositories.organization_domain_repo import OrganizationDomainRepository
+from app.repositories.organization_membership_repo import OrganizationMembershipRepository
+
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"/api/v1/auth/login"
 )
@@ -22,6 +26,21 @@ async def get_device_repo() -> DeviceRepository:
     if db_manager.db is None:
          raise RuntimeError("Database connection not ready.")
     return DeviceRepository(db_manager.db)
+
+async def get_idp_repo() -> IdentityProviderRepository:
+    if db_manager.db is None:
+         raise RuntimeError("Database connection not ready.")
+    return IdentityProviderRepository(db_manager.db)
+
+async def get_org_domain_repo() -> OrganizationDomainRepository:
+    if db_manager.db is None:
+         raise RuntimeError("Database connection not ready.")
+    return OrganizationDomainRepository(db_manager.db)
+
+async def get_org_membership_repo() -> OrganizationMembershipRepository:
+    if db_manager.db is None:
+         raise RuntimeError("Database connection not ready.")
+    return OrganizationMembershipRepository(db_manager.db)
 
 async def get_current_user(
     token: str = Depends(reusable_oauth2),

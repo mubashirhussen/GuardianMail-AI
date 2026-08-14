@@ -15,7 +15,9 @@ import {
   X,
   Sun,
   Moon,
-  ShieldCheck
+  ShieldCheck,
+  Target,
+  Sliders
 } from 'lucide-react';
 
 export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -40,6 +42,14 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Admin and SOC routes
   if (isAdminOrAnalyst()) {
+    navItems.push({ name: 'Threat Intelligence', path: '/threat-intelligence', icon: Target });
+    navItems.push({ name: 'Security Policies', path: '/settings/security/policies', icon: Sliders });
+    navItems.push({ name: 'AI Copilot', path: '/security/copilot', icon: ShieldCheck });
+    navItems.push({ name: 'Compliance & GRC', path: '/enterprise/governance', icon: FileText });
+    navItems.push({ name: 'Integrations', path: '/enterprise/integrations', icon: Sliders });
+    navItems.push({ name: 'Data Platform', path: '/enterprise/data-platform', icon: Activity });
+    navItems.push({ name: 'Detection Rules', path: '/security/detections', icon: Target });
+    navItems.push({ name: 'Investigations', path: '/security/investigations', icon: ShieldAlert });
     navItems.push({ name: 'System Diagnostics', path: '/system-health', icon: Activity });
   }
 

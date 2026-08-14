@@ -5,7 +5,7 @@ import { incidentsService } from '../services/incidents';
 import { 
   ArrowLeft, Terminal, CheckCircle2, Clock, 
   RefreshCw, FileText, Download, 
-  CheckSquare, Square, User, AlertCircle
+  CheckSquare, Square, User, AlertCircle, Cpu
 } from 'lucide-react';
 import { Loader } from '../components/Loader';
 
@@ -21,6 +21,61 @@ export const IncidentDetail: React.FC = () => {
   const [recipientEntity, setRecipientEntity] = useState('');
   const [templateType, setTemplateType] = useState('Trademark/Brand Spoof');
   const [generatedDraft, setGeneratedDraft] = useState<any | null>(null);
+
+  // AI Copilot state
+  const [copilotLoading, setCopilotLoading] = useState(false);
+  const [copilotResponse, setCopilotResponse] = useState<string | null>(null);
+  const [copilotInput, setCopilotInput] = useState('');
+
+  const handleRunCopilotAnalysis = async () => {
+    setCopilotLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/copilot/investigations/${id}/analyze`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCopilotResponse(data.content);
+      } else {
+        const err = await res.json();
+        setCopilotResponse(`Error: ${err.detail || 'Could not analyze.'}`);
+      }
+    } catch (e: any) {
+      setCopilotResponse(`Connection error: ${e.message}`);
+    }
+    setCopilotLoading(false);
+  };
+
+  const handleAskCopilot = async () => {
+    if (!copilotInput.trim()) return;
+    setCopilotLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/copilot/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          query: `Regarding investigation ID ${id}: ${copilotInput}`
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCopilotResponse(data.content);
+        setCopilotInput('');
+      } else {
+        const err = await res.json();
+        setCopilotResponse(`Error: ${err.detail || 'Could not query.'}`);
+      }
+    } catch (e: any) {
+      setCopilotResponse(`Connection error: ${e.message}`);
+    }
+    setCopilotLoading(false);
+  };
 
   // 1. Query: Incident Details
   const { data: incident, isLoading: incLoading, error: incError } = useQuery({
@@ -289,6 +344,53 @@ export const IncidentDetail: React.FC = () => {
               ) : (
                 <p className="text-xs text-slate-500 text-center py-6">No recovery checklist items populated.</p>
               )}
+            </div>
+          </div>
+
+          {/* AI Copilot Advisor */}
+          <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-lg space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4.5 w-4.5 text-cyan-400 animate-pulse" />
+                <h3 className="text-sm font-bold text-slate-200">AI Copilot Incident Agent</h3>
+              </div>
+              <button
+                onClick={handleRunCopilotAnalysis}
+                disabled={copilotLoading}
+                className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-850 disabled:text-slate-600 text-slate-950 font-bold rounded-lg text-[10px] transition active:scale-[0.98]"
+              >
+                {copilotLoading ? 'Analyzing...' : 'Generate Analysis Report'}
+              </button>
+            </div>
+            
+            {copilotResponse ? (
+              <div className="p-4 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
+                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider block">Copilot Response</span>
+                <p className="text-xs text-slate-350 whitespace-pre-wrap leading-relaxed">{copilotResponse}</p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-550 italic bg-slate-950/40 p-4 border border-slate-850/60 rounded-xl">
+                No active Copilot notes. Click "Generate Analysis Report" to produce timelines and automated containment diagnostics.
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Ask Copilot about this threat campaign..."
+                value={copilotInput}
+                onChange={(e) => setCopilotInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAskCopilot()}
+                disabled={copilotLoading}
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-500/50"
+              />
+              <button
+                onClick={handleAskCopilot}
+                disabled={copilotLoading || !copilotInput.trim()}
+                className="px-3 py-2 bg-slate-850 hover:bg-slate-750 disabled:opacity-50 text-slate-300 font-semibold rounded-lg text-xs transition border border-slate-850"
+              >
+                Ask
+              </button>
             </div>
           </div>
 

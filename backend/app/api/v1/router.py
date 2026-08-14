@@ -1,10 +1,15 @@
 from fastapi import APIRouter, Response
-from app.api.v1.endpoints import auth, devices, soc, complaints, reports, exposure, domain
+from app.api.v1.endpoints import auth, devices, soc, complaints, reports, exposure, domain, sso, policies, threat_intelligence, copilot, grc
 from app.services.observability import SystemObservabilityService
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+api_router.include_router(sso.router, prefix="", tags=["SSO & Enterprise Identity"])
+api_router.include_router(policies.router, prefix="", tags=["Security Policy Center"])
+api_router.include_router(threat_intelligence.router, prefix="", tags=["Threat Intelligence Platform"])
+api_router.include_router(copilot.router, prefix="", tags=["AI Security Copilot"])
+api_router.include_router(grc.router, prefix="", tags=["Governance, Risk & Compliance"])
 api_router.include_router(devices.router, prefix="/devices", tags=["Device & Sessions Security"])
 api_router.include_router(soc.router, prefix="/soc", tags=["Security Operations Center"])
 api_router.include_router(complaints.router, prefix="/complaints", tags=["Complaint Management"])

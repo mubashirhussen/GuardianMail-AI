@@ -17,13 +17,33 @@ class MockCollection:
         for doc in self.docs.values():
             match = True
             for k, v in query.items():
-                if k == "_id":
+                if k == "_id" and not isinstance(v, dict):
                     if str(doc.get("_id")) != str(v):
+                        match = False
+                elif isinstance(v, dict) and "$ne" in v:
+                    val = doc.get(k)
+                    if str(val) == str(v["$ne"]):
+                        match = False
+                elif k == "$or":
+                    or_match = False
+                    for sub_query in v:
+                        sub_match = True
+                        for sk, sv in sub_query.items():
+                            if doc.get(sk) != sv:
+                                sub_match = False
+                                break
+                        if sub_match:
+                            or_match = True
+                            break
+                    if not or_match:
                         match = False
                 elif k == "$in" or (isinstance(v, dict) and "$in" in v):
                     allowed = v["$in"] if isinstance(v, dict) else v
                     val = doc.get(k)
-                    if val not in allowed:
+                    if isinstance(val, list):
+                        if not any(item in allowed for item in val):
+                            match = False
+                    elif val not in allowed:
                         match = False
                 elif doc.get(k) != v:
                     match = False
@@ -62,6 +82,17 @@ class MockCollection:
             deleted_count = 0
         return DeleteResult()
 
+    async def delete_many(self, query, *args, **kwargs):
+        cursor = self.find(query)
+        items = await cursor.to_list()
+        count = 0
+        for item in items:
+            self.docs.pop(str(item["_id"]), None)
+            count += 1
+        class DeleteResult:
+            deleted_count = count
+        return DeleteResult()
+
     def find(self, query=None, *args, **kwargs):
         if query is None:
             query = {}
@@ -69,14 +100,32 @@ class MockCollection:
         for doc in self.docs.values():
             match = True
             for k, v in query.items():
-                if k == "_id":
+                if k == "_id" and not isinstance(v, dict):
                     if str(doc.get("_id")) != str(v):
                         match = False
+                elif k == "$or":
+                    or_match = False
+                    for sub_query in v:
+                        sub_match = True
+                        for sk, sv in sub_query.items():
+                            if doc.get(sk) != sv:
+                                sub_match = False
+                                break
+                        if sub_match:
+                            or_match = True
+                            break
+                    if not or_match:
+                        match = False
                 elif isinstance(v, dict) and "$ne" in v:
-                    if doc.get(k) == v["$ne"]:
+                    if str(doc.get(k)) == str(v["$ne"]):
                         match = False
                 elif isinstance(v, dict) and "$in" in v:
-                    if doc.get(k) not in v["$in"]:
+                    val = doc.get(k)
+                    allowed = v["$in"]
+                    if isinstance(val, list):
+                        if not any(item in allowed for item in val):
+                            match = False
+                    elif val not in allowed:
                         match = False
                 elif isinstance(v, dict) and "$regex" in v:
                     import re

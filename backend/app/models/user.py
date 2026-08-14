@@ -24,6 +24,8 @@ class UserBase(BaseModel):
     full_name: Optional[str] = None
     role: UserRole = UserRole.USER
     is_active: bool = True
+    department: Optional[str] = None
+    team: Optional[str] = None
 
 
 class UserCreate(UserBase):

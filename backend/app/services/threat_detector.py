@@ -366,6 +366,77 @@ class ThreatDetectorService:
         detector_sources.append("ai_semantic")
 
         # ----------------------------------------------------
+        # 13. Threat Intelligence Database Match (Workstream E4)
+        # ----------------------------------------------------
+        threat_intel_score = 0.0
+        extracted_domains = []
+        extracted_urls = []
+        for url_item in urls:
+             orig_url = url_item.get("original_url") or url_item.get("url") or ""
+             domain_part = url_item.get("domain") or ""
+             if orig_url:
+                  extracted_urls.append(orig_url)
+             if domain_part:
+                  extracted_domains.append(domain_part)
+        
+        extracted_hashes = []
+        for att in attachments:
+             h = att.get("sha256") or att.get("hash") or ""
+             if h:
+                  extracted_hashes.append(h)
+
+        if db:
+             query_vals = [from_domain, from_address] + extracted_domains + extracted_urls + extracted_hashes
+             query_vals = [str(v).lower().strip() for v in query_vals if v]
+             if query_vals:
+                  from app.core.tenant_context import request_tenant_context
+                  context = request_tenant_context.get()
+                  org_id = context.organization_id if context else None
+                  
+                  indicators_cursor = db["threat_indicators"].find({
+                      "normalized_value": {"$in": query_vals},
+                      "status": "ACTIVE",
+                      "$or": [
+                          {"organization_id": org_id},
+                          {"organization_id": None}
+                      ]
+                  })
+                  matching_iocs = await indicators_cursor.to_list(length=20)
+                  
+                  from app.services.threat_correlation import threat_correlation_service
+                  
+                  for ioc in matching_iocs:
+                       severity_str = ioc.get("severity", "medium").upper()
+                       conf_val = ioc.get("confidence", 50) / 100.0
+                       
+                       if severity_str == "CRITICAL":
+                            intel_score = 0.95
+                       elif severity_str == "HIGH":
+                            intel_score = 0.85
+                       elif severity_str == "MEDIUM":
+                            intel_score = 0.65
+                       else:
+                            intel_score = 0.35
+                       
+                       threat_intel_score = max(threat_intel_score, intel_score)
+                       
+                       findings.append(ThreatIndicator(
+                           indicator=f"Threat Intel Match: {ioc.get('indicator_type').upper()}",
+                           detail=f"Matched active IOC from source '{ioc.get('source')}'. Severity: {severity_str}. Confidence: {ioc.get('confidence')}%",
+                           severity=severity_str,
+                           confidence=conf_val,
+                           type="threat_intel"
+                       ))
+                       positive_evidence.append(f"[Threat Intel] Matched malicious {ioc.get('indicator_type')}: {ioc.get('normalized_value')}")
+                       
+                       # Record observation log
+                       await threat_correlation_service.record_observation(
+                           org_id=org_id or "system_global",
+                           indicator_id=str(ioc["_id"]),
+                           email_id=parsed_email.get("_id")
+                       )
+
+        # ----------------------------------------------------
         # Weighted Scoring & Aggregation
         # ----------------------------------------------------
         scores_list = {
@@ -390,8 +461,8 @@ class ThreatDetectorService:
         # Scale score from 0-1 to percentage 0-100
         final_score = weighted_sum * 100
         
-        # Elevate based on critical indicators (Display spoofing, bad SPF/DKIM/DMARC, suspicious links, macro/exe attachments)
-        max_hard_score = max(sender_score, domain_score, url_score, attach_score)
+        # Elevate based on critical indicators
+        max_hard_score = max(sender_score, domain_score, url_score, attach_score, threat_intel_score)
         if max_hard_score >= 0.90:
              final_score = max(final_score, 85.0)
         elif max_hard_score >= 0.80:
@@ -402,14 +473,10 @@ class ThreatDetectorService:
         # ----------------------------------------------------
         # False Positive Mitigation & Calibration
         # ----------------------------------------------------
-        # Rule: Urgent language + AI opinion alone is NOT enough to flag phishing.
-        # It MUST also display domain auth failures, URL threats, display spoofing, or attachments flags.
-        is_hard_indicator = (sender_score > 0 or domain_score > 0 or url_score > 0 or attach_score > 0)
+        is_hard_indicator = (sender_score > 0 or domain_score > 0 or url_score > 0 or attach_score > 0 or threat_intel_score > 0)
         if not is_hard_indicator and final_score >= 35:
-             # Cap final score to SUSPICIOUS range (max 45) if no structural threat exists
              final_score = min(45.0, final_score)
              
-        # Capping logic
         final_score = min(100.0, max(0.0, final_score))
         
         # Map verdict classification

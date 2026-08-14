@@ -9,34 +9,52 @@ class LLMProvider:
     """Abstract AI LLM Vendor interface supporting configurable OpenAI, Gemini, and Anthropic backends."""
     
     @staticmethod
-    async def generate_completion(prompt: str, provider: Optional[str] = None) -> str:
+    async def generate_completion(
+        prompt: str, 
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 2000,
+        timeout: float = 10.0
+    ) -> str:
         """Call configured AI vendor API to get content reasoning analysis (Zero-Trust Compliant)."""
         selected_provider = provider or getattr(settings, "AI_PROVIDER", "gemini").lower()
         
         if selected_provider == "gemini":
-            return await LLMProvider._call_gemini(prompt)
+            return await LLMProvider._call_gemini(prompt, model, temperature, max_tokens, timeout)
         elif selected_provider == "openai":
-            return await LLMProvider._call_openai(prompt)
+            return await LLMProvider._call_openai(prompt, model, temperature, max_tokens, timeout)
         elif selected_provider == "anthropic":
-            return await LLMProvider._call_anthropic(prompt)
+            return await LLMProvider._call_anthropic(prompt, model, temperature, max_tokens, timeout)
         else:
             return await LLMProvider._call_local_stub(prompt)
 
     @staticmethod
-    async def _call_gemini(prompt: str) -> str:
+    async def _call_gemini(
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 2000,
+        timeout: float = 10.0
+    ) -> str:
         """Query Google Gemini API model."""
         api_key = getattr(settings, "GEMINI_API_KEY", "")
         if not api_key:
              return '{"is_phishing": false, "reason": "Gemini API Key missing"}'
              
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+        model_name = model or "gemini-pro"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         headers = {"Content-Type": "application/json"}
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens
+            }
         }
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 res = await client.post(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
@@ -47,7 +65,13 @@ class LLMProvider:
         return '{"is_phishing": false, "reason": "Gemini connection error"}'
 
     @staticmethod
-    async def _call_openai(prompt: str) -> str:
+    async def _call_openai(
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 2000,
+        timeout: float = 10.0
+    ) -> str:
         """Query OpenAI Chat Completion API."""
         api_key = getattr(settings, "OPENAI_API_KEY", "")
         if not api_key:
@@ -58,14 +82,16 @@ class LLMProvider:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
+        model_name = model or getattr(settings, "OPENAI_MODEL", "gpt-4-turbo")
         payload = {
-            "model": getattr(settings, "OPENAI_MODEL", "gpt-4-turbo"),
+            "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1
+            "temperature": temperature,
+            "max_tokens": max_tokens
         }
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 res = await client.post(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
@@ -75,7 +101,13 @@ class LLMProvider:
         return '{"is_phishing": false, "reason": "OpenAI connection error"}'
 
     @staticmethod
-    async def _call_anthropic(prompt: str) -> str:
+    async def _call_anthropic(
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 1000,
+        timeout: float = 10.0
+    ) -> str:
         """Query Anthropic Claude Message API."""
         api_key = getattr(settings, "ANTHROPIC_API_KEY", "")
         if not api_key:
@@ -87,14 +119,16 @@ class LLMProvider:
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01"
         }
+        model_name = model or "claude-3-haiku-20240307"
         payload = {
-            "model": "claude-3-haiku-20240307",
+            "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1000
+            "max_tokens": max_tokens,
+            "temperature": temperature
         }
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 res = await client.post(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
