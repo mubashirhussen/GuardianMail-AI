@@ -1,8 +1,25 @@
 import { apiClient } from '../api/client';
 
 export const gmailService = {
-  async connectAccount(authCode: string): Promise<any> {
-    const response = await apiClient.post('/gmail/connect', { code: authCode });
+  async getPermissions(): Promise<{
+    scope: string;
+    scope_name: string;
+    data_accessed: string[];
+    purpose: string;
+    data_retention: string;
+    user_control: string;
+  }> {
+    const response = await apiClient.get('/gmail/permissions');
+    return response.data;
+  },
+
+  async getAuthUrl(): Promise<{ auth_url: string; state: string; scope: string }> {
+    const response = await apiClient.get('/gmail/auth-url');
+    return response.data;
+  },
+
+  async connectAccount(authCode: string, state?: string): Promise<any> {
+    const response = await apiClient.post('/gmail/connect', { code: authCode, state });
     return response.data;
   },
 

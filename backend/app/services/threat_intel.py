@@ -1,9 +1,13 @@
 import re
 import socket
 import httpx
+import ipaddress
+import logging
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 from app.core.config import settings
+
+logger = logging.getLogger("guardianmail.threat_intel")
 
 class ThreatIntelService:
     # URL Shorteners List
@@ -20,20 +24,202 @@ class ThreatIntelService:
     }
 
     @staticmethod
-    async def expand_short_url(url: str) -> str:
-        """Expand shortened URLs by tracking redirects using HTTP HEAD request (Module 7)."""
-        parsed = urlparse(url if url.startswith("http") else "http://" + url)
-        domain = parsed.netloc.lower().lstrip("www.")
-        
-        if domain not in ThreatIntelService.URL_SHORTENERS:
-            return url
-            
+    def validate_ip(value: str) -> bool:
+        """Validate if target is a valid IPv4 or IPv6 address."""
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
-                response = await client.head(url)
-                return str(response.url)
+            ipaddress.ip_address(value.strip())
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def validate_domain(domain: str) -> bool:
+        """Strict domain and hostname validation."""
+        val = domain.strip().lower()
+        if not val or len(val) > 253:
+            return False
+        
+        # Remove optional trailing dot for validation
+        if val.endswith('.'):
+            val = val[:-1]
+
+        # Label length validation
+        labels = val.split('.')
+        if len(labels) < 2:
+            return False
+            
+        for label in labels:
+            if not label or len(label) > 63:
+                return False
+            if label.startswith('-') or label.endswith('-'):
+                return False
+        
+        # General hostname/Punycode validator regex
+        domain_regex = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$')
+        return bool(domain_regex.match(val))
+
+    @staticmethod
+    def validate_url(url: str) -> bool:
+        """Strict URL syntax and scheme validation."""
+        val = url.strip()
+        if not val:
+            return False
+        try:
+            parsed = urlparse(val if "://" in val else "http://" + val)
+            if parsed.scheme.lower() not in ["http", "https"]:
+                return False
+            if not parsed.netloc:
+                return False
+            host = parsed.netloc.split(":")[0]
+            if not (ThreatIntelService.validate_ip(host) or ThreatIntelService.validate_domain(host)):
+                return False
+            return True
         except Exception:
-            return url  # Fallback to original URL if expansion fails
+            return False
+
+    @staticmethod
+    def validate_hash(value: str) -> bool:
+        """Strict MD5, SHA-1, or SHA-256 validation."""
+        val = value.strip()
+        hash_regex = re.compile(r'^(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$')
+        return bool(hash_regex.match(val))
+
+    @staticmethod
+    def validate_email(value: str) -> bool:
+        """Strict email syntax check."""
+        val = value.strip()
+        email_regex = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+        return bool(email_regex.match(val))
+
+    @staticmethod
+    def validate_indicator(indicator_type: str, value: str) -> bool:
+        """Centralized router verifying indicator by type against strict regex patterns."""
+        t_clean = indicator_type.lower().strip()
+        val_clean = value.strip()
+        
+        if t_clean in ["ipv4", "ipv6", "ip"]:
+            return ThreatIntelService.validate_ip(val_clean)
+        elif t_clean in ["domain", "hostname"]:
+            return ThreatIntelService.validate_domain(val_clean)
+        elif t_clean == "url":
+            return ThreatIntelService.validate_url(val_clean)
+        elif t_clean == "file_hash":
+            return ThreatIntelService.validate_hash(val_clean)
+        elif t_clean in ["email_address", "email"]:
+            return ThreatIntelService.validate_email(val_clean)
+        return False
+
+    @staticmethod
+    def normalize_indicator_value(ind_type: str, value: str) -> str:
+        """Centralized normalization producing canonical indicator values."""
+        t_clean = ind_type.lower().strip()
+        val_clean = value.strip()
+        
+        if t_clean in ["ipv4", "ipv6", "ip"]:
+            try:
+                ip = ipaddress.ip_address(val_clean)
+                return str(ip)
+            except ValueError:
+                return val_clean.lower()
+        elif t_clean in ["domain", "hostname", "email_address", "email"]:
+            norm = val_clean.lower()
+            if t_clean in ["domain", "hostname"] and norm.endswith("."):
+                norm = norm[:-1]
+            return norm
+        elif t_clean == "file_hash":
+            return val_clean.lower()
+        elif t_clean == "url":
+            if "://" in val_clean:
+                parts = val_clean.split("://", 1)
+                scheme = parts[0].lower()
+                rest = parts[1]
+                if "/" in rest:
+                    domain, path = rest.split("/", 1)
+                    return f"{scheme}://{domain.lower()}/{path}"
+                else:
+                    return f"{scheme}://{rest.lower()}"
+            return val_clean.lower()
+        return val_clean
+
+    @staticmethod
+    def is_ssrf_blocked_ip(ip_str: str) -> bool:
+        """Verify if a resolved IP address falls under private, loopback, link-local, or multicast networks."""
+        try:
+            ip = ipaddress.ip_address(ip_str.strip())
+            return (
+                ip.is_private or
+                ip.is_loopback or
+                ip.is_link_local or
+                ip.is_multicast or
+                ip.is_unspecified or
+                ip.is_reserved
+            )
+        except ValueError:
+            return True
+
+    @staticmethod
+    async def expand_short_url(url: str) -> str:
+        """SSRF-protected URL expander checking scheme, resolving host, validating IPs, and following redirects manually."""
+        current_url = url.strip()
+        max_redirects = 5
+        
+        for _ in range(max_redirects):
+            try:
+                parsed = urlparse(current_url if "://" in current_url else "http://" + current_url)
+            except Exception:
+                raise ValueError("SSRF block: Malformed URL target")
+
+            scheme = parsed.scheme.lower()
+            if scheme not in ["http", "https"]:
+                raise ValueError(f"SSRF block: Unsupported URL scheme '{scheme}'")
+
+            host = parsed.netloc.split(":")[0]
+            if not host:
+                raise ValueError("SSRF block: Missing URL hostname")
+
+            # Resolve host to IPs
+            try:
+                addr_info = socket.getaddrinfo(host, None)
+                ips = list({info[4][0] for info in addr_info})
+            except Exception as e:
+                raise ValueError(f"SSRF block: Host resolution failed: {e}")
+
+            if not ips:
+                raise ValueError("SSRF block: Host resolved to no IP addresses")
+
+            # Inspect all resolved IPs
+            for ip in ips:
+                if ThreatIntelService.is_ssrf_blocked_ip(ip):
+                    raise ValueError(f"SSRF block: Target resolved to private/unauthorized network: {ip}")
+
+            # If the domain is not in shorteners list, we do not need to redirect further
+            domain = parsed.netloc.lower().lstrip("www.")
+            if domain not in ThreatIntelService.URL_SHORTENERS:
+                return current_url
+
+            # Request HEAD to follow redirect
+            try:
+                async with httpx.AsyncClient(follow_redirects=False, timeout=5.0) as client:
+                    response = await client.head(current_url)
+                    if response.status_code in [301, 302, 303, 307, 308]:
+                        location = response.headers.get("Location")
+                        if not location:
+                            return current_url
+                        # Normalize redirect target
+                        if not location.startswith(("http://", "https://")):
+                            from urllib.parse import urljoin
+                            location = urljoin(current_url, location)
+                        current_url = location
+                    else:
+                        return current_url
+            except ValueError as e:
+                # Re-raise explicit SSRF blocks
+                raise e
+            except Exception as e:
+                logger.warning(f"URL expansion connection failed: {e}")
+                return current_url
+
+        return current_url
 
     @staticmethod
     def check_typosquatting(domain: str) -> Tuple[bool, Optional[str]]:

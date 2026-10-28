@@ -6,8 +6,10 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (payload: any) => Promise<void>;
+  loginWithGoogle: (credential: string) => Promise<any>;
   register: (payload: any) => Promise<void>;
   logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
   refreshUser: () => Promise<void>;
   isAdminOrAnalyst: () => boolean;
   isAdmin: () => boolean;
@@ -29,10 +31,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const u = await authService.getMe();
       setUser(u);
-    } catch (err) {
-      setUser(null);
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
+      localStorage.setItem('user_info', JSON.stringify(u));
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        setUser(null);
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user_info');
+      }
     } finally {
       setLoading(false);
     }
@@ -59,12 +65,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await refreshUser();
   };
 
+  const loginWithGoogle = async (credential: string) => {
+    const response = await authService.verifyGoogleToken(credential);
+    localStorage.setItem('access_token', response.access_token);
+    localStorage.setItem('refresh_token', response.refresh_token);
+    if (response.user) {
+      setUser(response.user);
+      localStorage.setItem('user_info', JSON.stringify(response.user));
+    }
+    await refreshUser();
+    return response;
+  };
+
   const register = async (payload: any) => {
     await authService.register(payload);
   };
 
   const logout = async () => {
     await authService.logout();
+    setUser(null);
+  };
+
+  const logoutAll = async () => {
+    await authService.logoutAll();
     setUser(null);
   };
 
@@ -82,8 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         loading,
         login,
+        loginWithGoogle,
         register,
         logout,
+        logoutAll,
         refreshUser,
         isAdminOrAnalyst,
         isAdmin,

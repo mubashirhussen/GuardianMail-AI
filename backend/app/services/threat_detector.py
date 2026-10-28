@@ -386,20 +386,34 @@ class ThreatDetectorService:
                   extracted_hashes.append(h)
 
         if db:
-             query_vals = [from_domain, from_address] + extracted_domains + extracted_urls + extracted_hashes
-             query_vals = [str(v).lower().strip() for v in query_vals if v]
-             if query_vals:
+             from app.services.threat_intel import ThreatIntelService
+             normalized_query_vals = []
+             if from_domain:
+                  normalized_query_vals.append(ThreatIntelService.normalize_indicator_value("domain", from_domain))
+             if from_address:
+                  normalized_query_vals.append(ThreatIntelService.normalize_indicator_value("email_address", from_address))
+             for d in extracted_domains:
+                  normalized_query_vals.append(ThreatIntelService.normalize_indicator_value("domain", d))
+             for u in extracted_urls:
+                  normalized_query_vals.append(ThreatIntelService.normalize_indicator_value("url", u))
+             for h in extracted_hashes:
+                  normalized_query_vals.append(ThreatIntelService.normalize_indicator_value("file_hash", h))
+
+             normalized_query_vals = list(set([v for v in normalized_query_vals if v]))
+
+             if normalized_query_vals:
                   from app.core.tenant_context import request_tenant_context
                   context = request_tenant_context.get()
                   org_id = context.organization_id if context else None
                   
                   indicators_cursor = db["threat_indicators"].find({
-                      "normalized_value": {"$in": query_vals},
+                      "normalized_value": {"$in": normalized_query_vals},
                       "status": "ACTIVE",
                       "$or": [
                           {"organization_id": org_id},
                           {"organization_id": None}
-                      ]
+                      ],
+                      "soft_delete": False
                   })
                   matching_iocs = await indicators_cursor.to_list(length=20)
                   

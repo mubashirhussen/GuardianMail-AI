@@ -1,6 +1,6 @@
 import os
-from typing import List, Optional
-from pydantic import AnyHttpUrl, field_validator
+from typing import List, Optional, Any
+from pydantic import AnyHttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -57,12 +57,45 @@ class Settings(BaseSettings):
     # Observability & Metrics
     PROMETHEUS_METRICS_ENABLED: bool = True
     
+    # Identity Verification & Multi-Channel Delivery
+    AUTH_CODE_TTL_SECONDS: int = 600
+    AUTH_RESEND_COOLDOWN_SECONDS: int = 60
+    AUTH_MAX_VERIFICATION_ATTEMPTS: int = 5
+    FRONTEND_URL: str = "http://localhost:5173"
+    BACKEND_URL: str = "http://localhost:8000"
+    
+    # Transactional Email Provider (console, smtp, resend, sendgrid)
+    EMAIL_PROVIDER: str = "console"
+    EMAIL_API_KEY: Optional[str] = None
+    EMAIL_FROM_ADDRESS: str = "security@guardianmail.ai"
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_USE_TLS: bool = True
+    
+    # SMS Verification Provider (console, twilio, twilio_verify)
+    SMS_PROVIDER: str = "console"
+    TWILIO_ACCOUNT_SID: Optional[str] = None
+    TWILIO_AUTH_TOKEN: Optional[str] = None
+    TWILIO_VERIFY_SERVICE_SID: Optional[str] = None
+    TWILIO_FROM_NUMBER: Optional[str] = None
+    
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"
     )
+
+    @field_validator("CORS_ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            if not v_stripped.startswith("["):
+                return [i.strip() for i in v_stripped.split(",") if i.strip()]
+        return v
 
     @field_validator("ENVIRONMENT")
     @classmethod
@@ -71,6 +104,28 @@ class Settings(BaseSettings):
         if v.lower() not in allowed:
             raise ValueError(f"ENVIRONMENT must be one of {allowed}")
         return v.lower()
+
+    @model_validator(mode="after")
+    def validate_production_config(self) -> "Settings":
+        if self.ENVIRONMENT == "production":
+            # Validate JWT secret key strength
+            if (
+                not self.SECRET_KEY
+                or "default" in self.SECRET_KEY.lower()
+                or "change-me" in self.SECRET_KEY.lower()
+                or "production-ready" in self.SECRET_KEY.lower()
+                or len(self.SECRET_KEY) < 32
+            ):
+                raise ValueError("SECRET_KEY must be a cryptographically strong, non-default string of at least 32 characters in production.")
+            
+            # Validate OAuth secrets presence
+            if not self.GOOGLE_CLIENT_ID or not self.GOOGLE_CLIENT_SECRET:
+                raise ValueError("Google OAuth credentials (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET) must be set in production.")
+            
+            # Prevent wildcard CORS rules
+            if "*" in self.CORS_ALLOWED_ORIGINS:
+                raise ValueError("Wildcard '*' CORS origins are strictly forbidden in production.")
+        return self
 
 # Instantiated settings singleton
 settings = Settings()

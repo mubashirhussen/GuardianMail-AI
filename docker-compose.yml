@@ -5,8 +5,6 @@ services:
     image: mongo:6.0
     container_name: guardianmail_mongo
     restart: unless-stopped
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     networks:
@@ -16,8 +14,6 @@ services:
     image: redis:7.2-alpine
     container_name: guardianmail_redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     networks:
       - guardianmail_net
 

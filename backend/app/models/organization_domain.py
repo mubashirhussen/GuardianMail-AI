@@ -1,6 +1,6 @@
 from typing import Optional
 from app.models.base import BaseMongoModel
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, ConfigDict
 
 class OrganizationDomain(BaseMongoModel):
     """Domain mapping and ownership verification status registry for corporate multi-tenant org routing."""
@@ -12,9 +12,7 @@ class OrganizationDomain(BaseMongoModel):
     verification_method: str = Field(default="dns_txt")
     verification_token: str = Field(..., description="Expected verification record token")
     
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
     @field_validator("domain")
     @classmethod

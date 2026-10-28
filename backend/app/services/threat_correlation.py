@@ -34,27 +34,8 @@ class ThreatCorrelationService:
 
     def normalize_indicator(self, ind_type: str, value: str) -> str:
         """Standardize indicator values to prevent duplicates (e.g. lowercase domains, trim hashes)."""
-        val_clean = str(value).strip()
-        ind_type_clean = ind_type.lower().strip()
-        
-        if ind_type_clean in ["domain", "email_address", "hostname"]:
-            return val_clean.lower()
-        elif ind_type_clean == "url":
-            # Normalize URL domain portion to lowercase, keep paths case sensitive
-            if "://" in val_clean:
-                parts = val_clean.split("://", 1)
-                scheme = parts[0].lower()
-                rest = parts[1]
-                if "/" in rest:
-                    domain, path = rest.split("/", 1)
-                    return f"{scheme}://{domain.lower()}/{path}"
-                else:
-                    return f"{scheme}://{rest.lower()}"
-            return val_clean.lower()
-        elif ind_type_clean == "file_hash":
-            return val_clean.lower() # MD5/SHA256 lowercase
-            
-        return val_clean
+        from app.services.threat_intel import ThreatIntelService
+        return ThreatIntelService.normalize_indicator_value(ind_type, value)
 
     async def ingest_indicator(
         self,
@@ -67,6 +48,10 @@ class ThreatCorrelationService:
         expires_in_days: int = 30
     ) -> Dict[str, Any]:
         """Ingest single indicator running validation, normalization, deduplication, enrichment and scoring (Idempotent)."""
+        from app.services.threat_intel import ThreatIntelService
+        if not ThreatIntelService.validate_indicator(indicator_type, indicator_value):
+            raise ValueError(f"Validation failed for indicator '{indicator_value}' of type '{indicator_type}'")
+
         norm_val = self.normalize_indicator(indicator_type, indicator_value)
         tags = tags or []
         

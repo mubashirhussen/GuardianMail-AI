@@ -2,7 +2,7 @@ import axios, { AxiosError } from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 
 // Access base URL using API V1 proxy settings or direct dev server
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -76,9 +76,9 @@ apiClient.interceptors.response.use(
       }
 
       try {
-        // Refresh token calling auth endpoint
-        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-          refresh_token: refreshToken,
+        // FastAPI treats the refresh_token parameter as a query value for this endpoint.
+        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, null, {
+          params: { refresh_token: refreshToken },
         });
 
         const { access_token, refresh_token: new_refresh_token } = response.data;

@@ -1,8 +1,29 @@
 import logging
 from pymongo import IndexModel, ASCENDING, DESCENDING, TEXT, HASHED
+from pymongo.errors import OperationFailure
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
+
+async def _safe_create_index(coll, *args, **kwargs):
+    try:
+        await coll.create_index(*args, **kwargs)
+    except OperationFailure as e:
+        if e.code == 86:  # IndexKeySpecsConflict
+            logger.warning(f"IndexKeySpecsConflict on {coll.name}, attempting recreation with updated specs: {e}")
+            try:
+                name = kwargs.get("name")
+                if not name and args and isinstance(args[0], list):
+                    name = "_".join(f"{k}_{v}" for k, v in args[0])
+                if name:
+                    await coll.drop_index(name)
+                    await coll.create_index(*args, **kwargs)
+            except Exception as drop_err:
+                logger.warning(f"Could not drop conflicting index on {coll.name}: {drop_err}")
+        else:
+            logger.warning(f"Non-fatal index creation warning on {coll.name}: {e}")
+    except Exception as e:
+        logger.warning(f"Index warning on {coll.name}: {e}")
 
 async def initialize_all_indexes(db: AsyncIOMotorDatabase) -> None:
     """Initialize index specifications programmatically for all 21 collection architectures."""
@@ -10,15 +31,15 @@ async def initialize_all_indexes(db: AsyncIOMotorDatabase) -> None:
         logger.info("Initializing database index validation rules...")
         
         # 1. Users collection
-        await db["users"].create_index([("email", ASCENDING)], unique=True)
-        await db["users"].create_index([("google_id", ASCENDING)], sparse=True)
+        await _safe_create_index(db["users"], [("email", ASCENDING)], unique=True)
+        await _safe_create_index(db["users"], [("google_id", ASCENDING)], sparse=True)
         
         # 2. Sessions collection
-        await db["sessions"].create_index([("token_id", ASCENDING)], unique=True)
-        await db["sessions"].create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)  # TTL index
+        await _safe_create_index(db["sessions"], [("token_id", ASCENDING)], unique=True)
+        await _safe_create_index(db["sessions"], [("expires_at", ASCENDING)], expireAfterSeconds=0)  # TTL index
         
         # 3. Devices collection
-        await db["devices"].create_index([("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
+        await _safe_create_index(db["devices"], [("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
         
         # 4. Emails collection
         await db["emails"].create_index([("user_id", ASCENDING), ("date", DESCENDING)])
@@ -36,6 +57,12 @@ async def initialize_all_indexes(db: AsyncIOMotorDatabase) -> None:
         
         # 8. ThreatIndicators collection
         await db["threat_indicators"].create_index([("email_id", ASCENDING), ("severity_level", ASCENDING)])
+        await db["threat_indicators"].create_index([
+            ("normalized_value", ASCENDING),
+            ("indicator_type", ASCENDING),
+            ("status", ASCENDING),
+            ("organization_id", ASCENDING)
+        ])
         
         # 9. ThreatReports collection
         await db["threat_reports"].create_index([("email_id", ASCENDING)], unique=True)
@@ -80,7 +107,65 @@ async def initialize_all_indexes(db: AsyncIOMotorDatabase) -> None:
         # Log cleanups TTL after 30 days (2592000 seconds)
         await db["background_jobs"].create_index([("completed_at", ASCENDING)], expireAfterSeconds=2592000)
         
+        # 22. ResponseDecisions collection
+        await db["response_decisions"].create_index([
+            ("organization_id", ASCENDING),
+            ("incident_id", ASCENDING),
+            ("status", ASCENDING),
+            ("created_at", DESCENDING)
+        ])
+
+        # 23. ResponseOutcomes collection
+        await db["response_outcomes"].create_index([
+            ("organization_id", ASCENDING),
+            ("execution_id", ASCENDING),
+            ("decision_id", ASCENDING),
+            ("status", ASCENDING),
+            ("created_at", DESCENDING)
+        ])
+        # TTL index for outcomes: retain 180 days (15552000 seconds)
+        await db["response_outcomes"].create_index([("created_at", ASCENDING)], expireAfterSeconds=15552000)
+ 
+        # 24. ResponsePolicies collection
+        await db["response_policies"].create_index([
+            ("organization_id", ASCENDING),
+            ("policy_id", ASCENDING),
+            ("status", ASCENDING)
+        ])
+ 
+        # 25. ResponsePolicyVersions collection
+        await db["response_policy_versions"].create_index([
+            ("organization_id", ASCENDING),
+            ("policy_id", ASCENDING),
+            ("version", DESCENDING)
+        ])
+ 
+        # 26. SOARExecutionRequests collection
+        await db["soar_execution_requests"].create_index([
+            ("organization_id", ASCENDING),
+            ("execution_id", ASCENDING),
+            ("status", ASCENDING),
+            ("created_at", DESCENDING)
+        ])
+        # TTL index for execution requests: retain 90 days (7776000 seconds)
+        await db["soar_execution_requests"].create_index([("created_at", ASCENDING)], expireAfterSeconds=7776000)
+
+        # 27. ResponseOptimizations collection
+        await db["response_optimizations"].create_index([
+            ("organization_id", ASCENDING),
+            ("created_at", DESCENDING)
+        ])
+        # TTL index for optimizations: retain 90 days (7776000 seconds)
+        await db["response_optimizations"].create_index([("created_at", ASCENDING)], expireAfterSeconds=7776000)
+
+        # 28. ResponseTuningRecommendations collection
+        await db["response_tuning_recommendations"].create_index([
+            ("organization_id", ASCENDING),
+            ("created_at", DESCENDING)
+        ])
+        # TTL index for recommendations: retain 90 days (7776000 seconds)
+        await db["response_tuning_recommendations"].create_index([("created_at", ASCENDING)], expireAfterSeconds=7776000)
+        
         logger.info("Successfully initialized all database collection index optimization structures.")
     except Exception as e:
-        logger.error(f"Failed programmatically checking index setup: {str(e)}")
-        raise
+        logger.warning(f"Index initialization warning: {str(e)}")

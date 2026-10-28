@@ -1,5 +1,5 @@
 from app.models.base import BaseMongoModel
-from pydantic import Field
+from pydantic import Field, ConfigDict
 
 class OrganizationMembership(BaseMongoModel):
     """Binds users to specific corporate organizations with assigned local role parameters."""
@@ -8,6 +8,4 @@ class OrganizationMembership(BaseMongoModel):
     user_id: str = Field(..., description="ID of the user account")
     role: str = Field(default="user", description="Tenant membership role, e.g. viewer, user, admin")
     
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

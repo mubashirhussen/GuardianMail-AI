@@ -13,6 +13,8 @@ from app.repositories.identity_provider_repo import IdentityProviderRepository
 from app.repositories.organization_domain_repo import OrganizationDomainRepository
 from app.repositories.organization_membership_repo import OrganizationMembershipRepository
 
+from app.repositories.verification_repo import VerificationRepository
+
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"/api/v1/auth/login"
 )
@@ -26,6 +28,11 @@ async def get_device_repo() -> DeviceRepository:
     if db_manager.db is None:
          raise RuntimeError("Database connection not ready.")
     return DeviceRepository(db_manager.db)
+
+async def get_verification_repo() -> VerificationRepository:
+    if db_manager.db is None:
+         raise RuntimeError("Database connection not ready.")
+    return VerificationRepository(db_manager.db)
 
 async def get_idp_repo() -> IdentityProviderRepository:
     if db_manager.db is None:

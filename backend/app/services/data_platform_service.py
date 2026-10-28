@@ -44,6 +44,10 @@ class DataPlatformService:
         res = await self.telemetry_repo.collection.insert_one(doc)
         doc["_id"] = str(res.inserted_id)
 
+        # Trigger production detection evaluation in background Celery worker
+        from app.workers.tasks import run_production_detections_task
+        run_production_detections_task.delay(org_id, event_id)
+
         # Track rate in real-time sliding window
         doc["rolling_rate_60s"] = await self.track_realtime_rate(org_id)
         return doc

@@ -64,15 +64,17 @@ class DatabaseManager:
                 settings.REDIS_URL,
                 encoding="utf-8",
                 decode_responses=True,
-                socket_connect_timeout=5,
+                socket_connect_timeout=3,
                 socket_keepalive=True,
             )
             await self.redis_client.ping()
             logger.info("Successfully connected to Redis.")
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-            # Redis is critical for caching and rate limiting
-            raise
+            logger.warning(
+                f"Redis is unavailable at {settings.REDIS_URL}: {e}. "
+                "Operating in in-memory cache fallback mode."
+            )
+            self.redis_client = None
     
     async def disconnect(self) -> None:
         """Close MongoDB and Redis connections."""
@@ -107,7 +109,7 @@ class DatabaseManager:
             
             # Devices collection indexes
             devices = self.db["devices"]
-            await devices.create_index([("user_id", 1), ("device_id", 1)])
+            await devices.create_index([("user_id", 1), ("device_id", 1)], unique=True)
             await devices.create_index("last_used_at")
             await devices.create_index("is_trusted")
             

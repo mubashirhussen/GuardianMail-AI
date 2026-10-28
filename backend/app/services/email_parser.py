@@ -134,7 +134,7 @@ class EmailParserService:
             'a': ['href', 'title', 'target'],
             'abbr': ['title'],
             'acronym': ['title'],
-            'img': ['src', 'alt', 'title', 'width', 'height', 'style']
+            'img': ['src', 'alt', 'title', 'width', 'height']
         }
         
         try:
@@ -152,7 +152,12 @@ class EmailParserService:
                     img.decompose()
 
             cleaned_html = str(soup)
-            sanitized = bleach.clean(cleaned_html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+            try:
+                from bleach.css_sanitizer import CSSSanitizer
+                css_sanitizer = CSSSanitizer()
+                sanitized = bleach.clean(cleaned_html, tags=allowed_tags, attributes=allowed_attrs, css_sanitizer=css_sanitizer, strip=True)
+            except Exception:
+                sanitized = bleach.clean(cleaned_html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
             return sanitized
         except Exception as e:
             logger.error(f"HTML sanitization failed: {str(e)}")

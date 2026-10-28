@@ -26,6 +26,7 @@ class UserBase(BaseModel):
     is_active: bool = True
     department: Optional[str] = None
     team: Optional[str] = None
+    phone_number: Optional[str] = None
 
 
 class UserCreate(UserBase):
@@ -35,8 +36,10 @@ class UserCreate(UserBase):
 
 class UserLogin(BaseModel):
     """Schema for user login."""
-    email: EmailStr
-    password: str
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    identifier: Optional[str] = None
+    password: Optional[str] = None
 
 
 class UserResponse(UserBase):
@@ -46,6 +49,8 @@ class UserResponse(UserBase):
     updated_at: datetime
     last_login: Optional[datetime] = None
     is_verified: bool = False
+    email_verified: bool = False
+    phone_verified: bool = False
     mfa_enabled: bool = False
 
     model_config = {
@@ -58,6 +63,11 @@ from app.models.base import BaseMongoModel, PyObjectId
 class UserInDB(UserBase, BaseMongoModel):
     """User document in database."""
     hashed_password: str
+    
+    # Contact Verification
+    phone_number: Optional[str] = None
+    email_verified: bool = False
+    phone_verified: bool = False
     
     # OAuth Integration
     google_id: Optional[str] = None

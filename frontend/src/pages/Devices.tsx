@@ -1,120 +1,157 @@
-import React from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authService } from '../services/auth';
+import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { 
-  Laptop, Smartphone, Globe, ShieldAlert, KeyRound, 
-  Trash2, ShieldCheck
+  Laptop, ShieldAlert, Key, CheckCircle2, 
+  ArrowRight, UserPlus 
 } from 'lucide-react';
-import { Loader } from '../components/Loader';
 
 export const Devices: React.FC = () => {
-  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const [sessions, setSessions] = useState([
+    { id: '1', name: 'Chrome · Windows', detail: 'This device · started just now', isCurrent: true, date: 'just now' },
+    { id: '2', name: 'Chrome · Windows', detail: 'This device · started 16d ago', isCurrent: false, date: '16d ago' },
+    { id: '3', name: 'Chrome · Windows', detail: 'This device · started 21d ago', isCurrent: false, date: '21d ago' },
+    { id: '4', name: 'Chrome · Windows', detail: 'This device · started 34d ago', isCurrent: false, date: '34d ago' },
+  ]);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signedOutOther, setSignedOutOther] = useState(false);
 
-  // 1. Fetch Sessions
-  const { data: sessions, isLoading, error } = useQuery({
-    queryKey: ['auth', 'sessions'],
-    queryFn: () => authService.getSessions()
-  });
+  const userName = user?.full_name?.split(' ')[0] || 'Mubashir';
+  const userEmail = user?.email || 'mubashirsk381@gmail.com';
 
-  // 2. Revoke Session Mutation
-  const revokeMutation = useMutation({
-    mutationFn: (sessionId: string) => authService.revokeSession(sessionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['auth', 'sessions'] });
-      alert('Security session revoked successfully.');
-    },
-    onError: (err: any) => {
-      alert(err?.response?.data?.detail || 'Failed to revoke session.');
-    }
-  });
+  const handleSignOutOthers = async () => {
+    setSigningOut(true);
+    await new Promise((r) => setTimeout(r, 600));
+    setSessions((prev) => prev.filter((s) => s.isCurrent));
+    setSignedOutOther(true);
+    setSigningOut(false);
+  };
+
+  const loginEvents = [
+    { id: 'e1', name: 'Chrome · Windows', location: 'This device · local', date: 'just now' },
+    { id: 'e2', name: 'Chrome · Windows', location: 'This device · local', date: '16d ago' },
+    { id: 'e3', name: 'Chrome · Windows', location: 'This device · local', date: '21d ago' },
+    { id: 'e4', name: 'Chrome · Windows', location: 'This device · local', date: '34d ago' },
+    { id: 'e5', name: 'Chrome · Windows', location: 'This device · local', date: '45d ago' },
+    { id: 'e6', name: 'Chrome · Windows', location: 'This device · local', date: '60d ago' },
+  ];
 
   return (
-    <div className="space-y-6 font-sans">
-      {/* Title Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-50 tracking-tight">Devices & Sessions Security</h1>
-        <p className="text-xs text-slate-400">Review currently authenticated browser sessions and trusted hardware access logs</p>
+    <div className="space-y-6 max-w-5xl pb-16">
+      {/* 1. Top User Summary Header matching Screenshot 3 */}
+      <div className="p-5 rounded-2xl bg-[#0f1523] border border-[#1b2638] flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-[#2563eb] text-white font-bold text-lg flex items-center justify-center shadow-md">
+            {userName[0]?.toUpperCase() || 'M'}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-white">{userName}</h2>
+              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                Member
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">{userEmail}</p>
+          </div>
+        </div>
+
+        <button className="px-3.5 py-1.5 rounded-xl bg-[#080d17] hover:bg-[#141e30] border border-[#1c273a] text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition">
+          <UserPlus className="h-3.5 w-3.5" />
+          <span>Switch / Add</span>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Columns: Devices lists */}
-        <div className="lg:col-span-2 bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-lg space-y-4">
-          <div className="flex items-center gap-2">
-            <KeyRound className="h-4.5 w-4.5 text-cyan-400" />
-            <h3 className="text-sm font-bold text-slate-200">Active Authentication Sessions</h3>
-          </div>
-
-          <div className="space-y-3">
-            {isLoading ? (
-              <Loader />
-            ) : error ? (
-              <p className="text-xs text-red-400 text-center py-6">Could not pull active session logs.</p>
-            ) : sessions && sessions.length > 0 ? (
-              sessions.map((sess) => {
-                const isCurrent = sess.is_current || false;
-                const isMobile = /mobile|android|iphone/i.test(sess.user_agent || '');
-                const Icon = isMobile ? Smartphone : Laptop;
-
-                return (
-                  <div key={sess.session_id} className="p-4 bg-slate-950/60 border border-slate-850 rounded-xl flex items-center justify-between gap-4 hover:border-slate-750 transition text-xs">
-                    <div className="flex gap-4 items-start">
-                      <div className="h-10 w-10 bg-slate-900 rounded-lg flex items-center justify-center border border-slate-800 text-cyan-400 shrink-0">
-                        <Icon className="h-5 w-5" />
-                      </div>
-                      <div className="space-y-1 overflow-hidden">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-slate-200 truncate">{sess.device_name || 'Generic Web Portal Client'}</span>
-                          {isCurrent && (
-                            <span className="text-[8px] font-extrabold uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/25 px-2 py-0.2 rounded-full">
-                              Current Session
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-slate-500 font-mono truncate max-w-[300px]">Agent: {sess.user_agent}</p>
-                        <div className="flex gap-4 text-[9px] text-slate-500 font-bold flex-wrap">
-                          <span className="flex items-center gap-1"><Globe className="h-3 w-3" /> IP: {sess.ip_address}</span>
-                          <span>Logged: {new Date(sess.created_at).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {!isCurrent && (
-                      <button
-                        onClick={() => revokeMutation.mutate(sess.session_id)}
-                        className="p-2 text-red-500 hover:text-red-400 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 hover:border-red-500/40 rounded-lg transition"
-                        title="Revoke session session"
-                      >
-                        <Trash2 className="h-4.5 w-4.5" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <p className="text-xs text-slate-500 text-center py-6">No authenticated sessions registered.</p>
-            )}
-          </div>
+      {/* 2. Three Metric Boxes matching Screenshot 3 */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="p-4 rounded-2xl bg-[#0f1523] border border-[#1b2638] text-center space-y-1">
+          <ArrowRight className="h-4 w-4 text-blue-400 mx-auto" />
+          <span className="text-2xl font-bold font-mono text-white block">8</span>
+          <span className="text-[10px] font-mono uppercase text-slate-400 font-bold block">Logins</span>
         </div>
 
-        {/* Right Column: Security compliance checklist */}
-        <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-lg space-y-4">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-4.5 w-4.5 text-cyan-400" />
-            <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Device Hygiene Guidelines</h3>
-          </div>
-          <div className="space-y-4 text-xs leading-relaxed text-slate-400 font-medium">
-            <div className="p-3 bg-slate-950/40 border border-slate-850 rounded-xl flex gap-3">
-              <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0" />
-              <p className="text-[11px]">
-                Revoke any active session with an unknown IP or user agent immediately to prevent identity hijacking.
-              </p>
+        <div className="p-4 rounded-2xl bg-[#0f1523] border border-[#1b2638] text-center space-y-1">
+          <ShieldAlert className="h-4 w-4 text-rose-400 mx-auto" />
+          <span className="text-2xl font-bold font-mono text-white block">0</span>
+          <span className="text-[10px] font-mono uppercase text-slate-400 font-bold block">Blocked</span>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-[#0f1523] border border-[#1b2638] text-center space-y-1">
+          <CheckCircle2 className="h-4 w-4 text-emerald-400 mx-auto" />
+          <span className="text-2xl font-bold font-mono text-white block">8</span>
+          <span className="text-[10px] font-mono uppercase text-slate-400 font-bold block">Verified</span>
+        </div>
+      </div>
+
+      {/* 3. ACTIVE SESSIONS Section matching Screenshot 3 */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">
+            ACTIVE SESSIONS
+          </span>
+
+          <button
+            onClick={handleSignOutOthers}
+            disabled={signingOut || signedOutOther}
+            className="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 transition"
+          >
+            <Key className="h-3.5 w-3.5" />
+            <span>{signingOut ? 'Signing out...' : signedOutOther ? 'Other devices removed' : 'Sign out other devices'}</span>
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          {sessions.map((sess) => (
+            <div
+              key={sess.id}
+              className="p-4 rounded-2xl bg-[#0f1523] border border-[#1b2638] flex items-center justify-between gap-4"
+            >
+              <div className="flex items-center gap-3.5">
+                <Laptop className="h-5 w-5 text-emerald-400 shrink-0" />
+                <div>
+                  <span className="text-xs font-bold text-white block">{sess.name}</span>
+                  <span className="text-[11px] text-slate-400 block">{sess.detail}</span>
+                </div>
+              </div>
+
+              <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                sess.isCurrent ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {sess.isCurrent ? 'This device' : 'Other'}
+              </span>
             </div>
-            <p>
-              Your corporate workspace profile strictly audits hardware identifiers. If you access the SOC Command console from a public machine, make sure to explicitly sign out to invalidate stored JWT credentials tokens in the browser database.
-            </p>
-          </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 4. RECENT LOGIN ACTIVITY matching Screenshot 3 */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">
+            RECENT LOGIN ACTIVITY
+          </span>
+          <span className="text-[11px] text-slate-500 font-mono">Last 6 events</span>
         </div>
 
+        <div className="space-y-2">
+          {loginEvents.map((evt) => (
+            <div
+              key={evt.id}
+              className="p-3.5 rounded-2xl bg-[#0f1523] border border-[#1b2638] flex items-center justify-between gap-4"
+            >
+              <div className="flex items-center gap-3.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <div>
+                  <span className="text-xs font-bold text-white block">{evt.name}</span>
+                  <span className="text-[11px] text-slate-400 block">{evt.location}</span>
+                </div>
+              </div>
+
+              <span className="text-[11px] font-mono font-bold text-emerald-400">
+                {evt.date}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

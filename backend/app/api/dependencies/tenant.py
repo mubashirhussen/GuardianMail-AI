@@ -12,7 +12,9 @@ ROLE_PERMISSIONS = {
         "scans.read",
         "emails.read",
         "reports.read",
-        "threat_intelligence.read"
+        "threat_intelligence.read",
+        "response.read",
+        "soar.execution.read"
     ],
     "user": [
         "policies.read",
@@ -23,7 +25,9 @@ ROLE_PERMISSIONS = {
         "reports.create",
         "reports.update",
         "policies.simulate",
-        "threat_intelligence.read"
+        "threat_intelligence.read",
+        "response.read",
+        "soar.execution.read"
     ],
     "soc_analyst": [
         "policies.read",
@@ -42,7 +46,12 @@ ROLE_PERMISSIONS = {
         "compliance.read",
         "risks.read",
         "integrations.read",
-        "telemetry.read"
+        "telemetry.read",
+        "response.read",
+        "response.reject",
+        "response.manage",
+        "soar.execution.read",
+        "soar.execution.manage"
     ],
     "security_analyst": [
         "policies.read",
@@ -64,7 +73,14 @@ ROLE_PERMISSIONS = {
         "compliance.read",
         "risks.read",
         "integrations.read",
-        "telemetry.read"
+        "telemetry.read",
+        "response.read",
+        "response.approve",
+        "response.reject",
+        "response.manage",
+        "soar.execution.read",
+        "soar.execution.manage",
+        "response.execute"
     ],
     "admin": [
         "policies.read",
@@ -100,7 +116,14 @@ ROLE_PERMISSIONS = {
         "integrations.read",
         "integrations.manage",
         "telemetry.read",
-        "telemetry.manage"
+        "telemetry.manage",
+        "response.read",
+        "response.approve",
+        "response.reject",
+        "response.manage",
+        "soar.execution.read",
+        "soar.execution.manage",
+        "response.execute"
     ]
 }
 

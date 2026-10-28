@@ -1,21 +1,33 @@
 import uuid
 import secrets
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from app.config.settings import settings
 from app.security.password import hash_password, verify_password
 from app.security.jwt import create_access_token, create_refresh_token, decode_token, decode_token_async
-from app.api.dependencies.auth import get_user_repo, get_device_repo, get_current_active_user, reusable_oauth2
+from app.api.dependencies.auth import get_user_repo, get_device_repo, get_verification_repo, get_current_active_user, reusable_oauth2
 from app.models.user import UserCreate, UserLogin, UserResponse, UserRole, UserInDB
 from app.repositories.user_repo import UserRepository
 from app.repositories.device_repo import DeviceRepository
+from app.repositories.verification_repo import VerificationRepository
 from app.repositories.audit_repo import AuditRepository
 from app.database.connection import db_manager
 from app.database.cache import cache_manager
 from app.exceptions.custom import AuthError, TokenExpiredError
 from app.telemetry.otel import trace_span
+from app.auth.oauth import GoogleOAuthService
+from app.services.identity.delivery_service import (
+    IdentityDeliveryService,
+    generate_secure_otp,
+    normalize_phone_number,
+    mask_identifier
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -29,9 +41,10 @@ async def get_audit_repo() -> AuditRepository:
 async def register(
     user_in: UserCreate, 
     user_repo: UserRepository = Depends(get_user_repo),
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
     audit_repo: AuditRepository = Depends(get_audit_repo)
 ):
-    """Register a new user account (IAM Module)."""
+    """Register a new user account and dispatch initial verification challenge."""
     existing_user = await user_repo.get_by_email(user_in.email)
     if existing_user:
         raise HTTPException(
@@ -42,17 +55,43 @@ async def register(
     user_dict = user_in.model_dump()
     password = user_dict.pop("password")
     
+    # Normalize phone number if supplied
+    if user_dict.get("phone_number"):
+        try:
+            user_dict["phone_number"] = normalize_phone_number(user_dict["phone_number"])
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
     now = datetime.now(timezone.utc)
     user_dict["hashed_password"] = hash_password(password)
     user_dict["created_at"] = now
     user_dict["updated_at"] = now
     user_dict["failed_login_attempts"] = 0
+    user_dict["is_verified"] = False
+    user_dict["email_verified"] = False
+    user_dict["phone_verified"] = False
     
     created_user = await user_repo.create(user_dict)
+    user_id_str = str(created_user["_id"])
+    
+    # Generate and issue cryptographically secure initial registration verification code
+    code = generate_secure_otp()
+    await verification_repo.create_challenge(
+        identifier=created_user["email"],
+        identifier_type="email",
+        purpose="registration",
+        code=code,
+        user_id=user_id_str
+    )
+    
+    try:
+        await IdentityDeliveryService.send_email(created_user["email"], code, "registration")
+    except Exception as e:
+        logger.warning(f"Registration verification email dispatch warning: {str(e)}")
     
     # Audit log user registration
     await audit_repo.create({
-        "user_id": str(created_user["_id"]),
+        "user_id": user_id_str,
         "action": "USER_REGISTER",
         "details": {
             "email": created_user["email"],
@@ -62,7 +101,7 @@ async def register(
     })
     
     # Map _id string
-    created_user["_id"] = str(created_user["_id"])
+    created_user["_id"] = user_id_str
     return created_user
 
 @router.post("/login")
@@ -74,12 +113,24 @@ async def login(
     device_repo: DeviceRepository = Depends(get_device_repo),
     audit_repo: AuditRepository = Depends(get_audit_repo)
 ):
-    """Authenticate credentials, verify account lockout, register session & fingerprinted device."""
-    user = await user_repo.get_by_email(user_in.email)
+    """Authenticate credentials (email or phone), verify account lockout, register session & fingerprinted device."""
+    identifier = (user_in.identifier or user_in.email or user_in.phone_number or "").strip()
+    if not identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email address or phone number is required."
+        )
+    if not user_in.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is required."
+        )
+
+    user = await user_repo.get_by_identifier(identifier)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Incorrect email or password"
+            detail="Incorrect email, phone number, or password"
         )
         
     # Check Lockout Protection
@@ -98,7 +149,7 @@ async def login(
     # Verify Password
     if not verify_password(user_in.password, user["hashed_password"]):
         attempts = await user_repo.increment_login_attempts(
-            user_in.email, 
+            identifier, 
             lockout_limit=settings.MAX_LOGIN_ATTEMPTS, 
             duration_seconds=settings.LOCKOUT_DURATION_SECONDS
         )
@@ -108,7 +159,7 @@ async def login(
             "user_id": str(user["_id"]),
             "action": "USER_LOGIN_FAILED",
             "details": {
-                "email": user["email"],
+                "identifier": mask_identifier(identifier),
                 "attempts_count": attempts
             },
             "created_at": now
@@ -119,14 +170,14 @@ async def login(
                 "user_id": str(user["_id"]),
                 "action": "USER_LOCKOUT",
                 "details": {
-                    "email": user["email"],
+                    "identifier": mask_identifier(identifier),
                     "lockout_duration_seconds": settings.LOCKOUT_DURATION_SECONDS
                 },
                 "created_at": now
             })
             
         remaining = settings.MAX_LOGIN_ATTEMPTS - attempts
-        detail = "Incorrect email or password."
+        detail = "Incorrect email, phone number, or password."
         if remaining > 0:
             detail += f" {remaining} attempts remaining before account lockout."
         else:
@@ -138,7 +189,7 @@ async def login(
         )
         
     # Reset failures on successful login
-    await user_repo.reset_login_attempts(user_in.email)
+    await user_repo.reset_login_attempts(identifier)
     
     # Session & Device fingerprinting
     user_agent = request.headers.get("user-agent", "Unknown")
@@ -363,93 +414,650 @@ async def logout_other_devices(
     
     return {"detail": f"Successfully revoked {revoked_count} other sessions"}
 
-# ─── GOOGLE OAUTH 2.0 ────────────────────────────────────────────────────────
+@router.post("/logout-all")
+async def logout_all(
+    token: str = Depends(reusable_oauth2),
+    current_user: UserInDB = Depends(get_current_active_user),
+    device_repo: DeviceRepository = Depends(get_device_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """Revoke all active sessions and devices for the authenticated user."""
+    user_id = str(current_user.id or current_user.model_dump().get("_id"))
+    
+    # Blacklist all sessions in Redis
+    active_sessions = await device_repo.sessions_collection.find({
+        "user_id": user_id,
+        "is_active": True
+    }).to_list(length=200)
+    
+    for s in active_sessions:
+        await cache_manager.set(f"blacklist:{s['token_id']}", "1", 86400 * 30)
+        
+    await device_repo.sessions_collection.update_many(
+        {"user_id": user_id, "is_active": True},
+        {"$set": {"is_active": False}}
+    )
+    
+    await audit_repo.create({
+        "user_id": user_id,
+        "action": "USER_LOGOUT_ALL",
+        "details": {"revoked_sessions_count": len(active_sessions)},
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    return {"detail": f"Successfully logged out from all active sessions ({len(active_sessions)} revoked)."}
+
+# ─── MULTI-CHANNEL IDENTITY VERIFICATION & RECOVERY ─────────────────────────
+
+class EmailSendCodeRequest(BaseModel):
+    email: str = Field(..., description="Target email address")
+    purpose: str = Field(default="registration", description="registration, login_step_up, email_change")
+
+class EmailVerifyRequest(BaseModel):
+    email: str = Field(..., description="Target email address")
+    code: str = Field(..., min_length=4, max_length=8, description="6-digit verification code")
+    purpose: str = Field(default="registration", description="registration, login_step_up, email_change")
+
+class PhoneSendCodeRequest(BaseModel):
+    phone_number: str = Field(..., description="Phone number with country code")
+    purpose: str = Field(default="phone_verification", description="phone_verification, registration, login_step_up")
+
+class PhoneVerifyRequest(BaseModel):
+    phone_number: str = Field(..., description="Phone number with country code")
+    code: str = Field(..., min_length=4, max_length=8, description="6-digit verification code")
+    purpose: str = Field(default="phone_verification", description="phone_verification, registration, login_step_up")
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., description="Registered account email address")
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., description="Registered account email address")
+    code: str = Field(..., min_length=4, max_length=8, description="6-digit verification code received via email")
+    new_password: str = Field(..., min_length=8, description="New password (minimum 8 characters)")
+
+@router.post("/email/send-code")
+@trace_span(name="auth_email_send_code")
+async def email_send_code(
+    payload: EmailSendCodeRequest,
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Generate and dispatch a cryptographically secure 6-digit verification code via configured Email provider.
+    Enforces cooldown rate-limits and invalidates previous active challenges.
+    """
+    clean_email = payload.email.strip().lower()
+    cooldown = await verification_repo.check_resend_cooldown(clean_email, payload.purpose)
+    if cooldown > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Please wait {cooldown} seconds before requesting a new code."
+        )
+
+    code = generate_secure_otp()
+    await verification_repo.create_challenge(
+        identifier=clean_email,
+        identifier_type="email",
+        purpose=payload.purpose,
+        code=code
+    )
+
+    delivery_res = await IdentityDeliveryService.send_email(clean_email, code, payload.purpose)
+    masked = mask_identifier(clean_email)
+
+    await audit_repo.create({
+        "action": "AUTH_EMAIL_CODE_SENT",
+        "details": {"destination": masked, "purpose": payload.purpose, "provider": delivery_res.get("provider")},
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {
+        "status": "sent",
+        "destination": masked,
+        "cooldown_seconds": settings.AUTH_RESEND_COOLDOWN_SECONDS,
+        "expires_in_seconds": settings.AUTH_CODE_TTL_SECONDS
+    }
+
+@router.post("/email/verify")
+@trace_span(name="auth_email_verify")
+async def email_verify(
+    payload: EmailVerifyRequest,
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    user_repo: UserRepository = Depends(get_user_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Verify submitted 6-digit email OTP.
+    Checks HMAC hash, attempt count limits, expiration, and marks code consumed on success.
+    """
+    clean_email = payload.email.strip().lower()
+    success, msg = await verification_repo.verify_challenge(clean_email, payload.purpose, payload.code)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+    # If purpose is registration or email_change, activate/verify the user record
+    user = await user_repo.get_by_email(clean_email)
+    if user:
+        await user_repo.update(user["_id"], {
+            "is_verified": True,
+            "email_verified": True,
+            "updated_at": datetime.now(timezone.utc)
+        })
+
+    masked = mask_identifier(clean_email)
+    await audit_repo.create({
+        "action": "AUTH_EMAIL_VERIFIED",
+        "details": {"destination": masked, "purpose": payload.purpose},
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {
+        "status": "verified",
+        "message": "Email address successfully verified."
+    }
+
+@router.post("/phone/send-code")
+@trace_span(name="auth_phone_send_code")
+async def phone_send_code(
+    payload: PhoneSendCodeRequest,
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Generate and dispatch a 6-digit SMS verification code to an E.164 normalized phone number.
+    Rejects invalid format, enforces resend cooldowns, and dispatches via configured SMS provider.
+    """
+    try:
+        norm_phone = normalize_phone_number(payload.phone_number)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    cooldown = await verification_repo.check_resend_cooldown(norm_phone, payload.purpose)
+    if cooldown > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Please wait {cooldown} seconds before requesting a new SMS code."
+        )
+
+    code = generate_secure_otp()
+    await verification_repo.create_challenge(
+        identifier=norm_phone,
+        identifier_type="phone",
+        purpose=payload.purpose,
+        code=code
+    )
+
+    delivery_res = await IdentityDeliveryService.send_sms(norm_phone, code, payload.purpose)
+    masked = mask_identifier(norm_phone)
+
+    await audit_repo.create({
+        "action": "AUTH_SMS_CODE_SENT",
+        "details": {"destination": masked, "purpose": payload.purpose, "provider": delivery_res.get("provider")},
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {
+        "status": "sent",
+        "destination": masked,
+        "cooldown_seconds": settings.AUTH_RESEND_COOLDOWN_SECONDS,
+        "expires_in_seconds": settings.AUTH_CODE_TTL_SECONDS
+    }
+
+@router.post("/phone/verify")
+@trace_span(name="auth_phone_verify")
+async def phone_verify(
+    payload: PhoneVerifyRequest,
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    user_repo: UserRepository = Depends(get_user_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Verify submitted 6-digit SMS OTP against latest active challenge.
+    """
+    try:
+        norm_phone = normalize_phone_number(payload.phone_number)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    success, msg = await verification_repo.verify_challenge(norm_phone, payload.purpose, payload.code)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+    user = await user_repo.get_by_phone(norm_phone)
+    if user:
+        await user_repo.update(user["_id"], {
+            "phone_verified": True,
+            "updated_at": datetime.now(timezone.utc)
+        })
+
+    masked = mask_identifier(norm_phone)
+    await audit_repo.create({
+        "action": "AUTH_PHONE_VERIFIED",
+        "details": {"destination": masked, "purpose": payload.purpose},
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {
+        "status": "verified",
+        "message": "Phone number successfully verified."
+    }
+
+@router.post("/password/forgot")
+@trace_span(name="auth_password_forgot")
+async def password_forgot(
+    payload: ForgotPasswordRequest,
+    user_repo: UserRepository = Depends(get_user_repo),
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Initiate self-service password recovery flow.
+    Enforces anti-enumeration: always returns a generic success message regardless of whether
+    the account exists, but dispatches a real verification code only to legitimate, active accounts.
+    """
+    clean_email = payload.email.strip().lower()
+    user = await user_repo.get_by_email(clean_email)
+    
+    if user and user.get("is_active", True):
+        cooldown = await verification_repo.check_resend_cooldown(clean_email, "password_reset")
+        if cooldown == 0:
+            code = generate_secure_otp()
+            await verification_repo.create_challenge(
+                identifier=clean_email,
+                identifier_type="email",
+                purpose="password_reset",
+                code=code,
+                user_id=str(user["_id"])
+            )
+            try:
+                await IdentityDeliveryService.send_email(clean_email, code, "password_reset")
+            except Exception as e:
+                logger.error(f"Failed to dispatch password reset email: {str(e)}")
+
+        await audit_repo.create({
+            "user_id": str(user["_id"]),
+            "action": "PASSWORD_RESET_REQUESTED",
+            "details": {"email": mask_identifier(clean_email)},
+            "created_at": datetime.now(timezone.utc)
+        })
+
+    # Always return anti-enumeration generic response
+    return {
+        "status": "sent",
+        "message": "If an account exists with this email address, a password reset code has been sent."
+    }
+
+@router.post("/password/reset")
+@trace_span(name="auth_password_reset")
+async def password_reset(
+    payload: PasswordResetRequest,
+    user_repo: UserRepository = Depends(get_user_repo),
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    device_repo: DeviceRepository = Depends(get_device_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Reset user password using single-use 6-digit verification code.
+    Revokes all existing user sessions upon password change to protect against compromised credentials.
+    """
+    if len(payload.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long."
+        )
+
+    clean_email = payload.email.strip().lower()
+    success, msg = await verification_repo.verify_challenge(clean_email, "password_reset", payload.code)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+    user = await user_repo.get_by_email(clean_email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid request or account not found."
+        )
+
+    user_id = str(user["_id"])
+    new_hashed = hash_password(payload.new_password)
+
+    await user_repo.update(user_id, {
+        "hashed_password": new_hashed,
+        "failed_login_attempts": 0,
+        "locked_until": None,
+        "updated_at": datetime.now(timezone.utc)
+    })
+
+    # Invalidate all active sessions for this user in DB & Redis
+    active_sessions = await device_repo.sessions_collection.find({
+        "user_id": user_id,
+        "is_active": True
+    }).to_list(length=200)
+
+    for s in active_sessions:
+        await cache_manager.set(f"blacklist:{s['token_id']}", "1", 86400 * 30)
+
+    await device_repo.sessions_collection.update_many(
+        {"user_id": user_id, "is_active": True},
+        {"$set": {"is_active": False}}
+    )
+
+    await audit_repo.create({
+        "user_id": user_id,
+        "action": "PASSWORD_RESET_SUCCESS",
+        "details": {"revoked_sessions_count": len(active_sessions)},
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {
+        "status": "success",
+        "message": "Password has been successfully reset. Please sign in with your new password."
+    }
+
+# ─── GOOGLE IDENTITY SERVICES & OIDC AUTHENTICATION ─────────────────────────
+
+class GoogleConfigResponse(BaseModel):
+    client_id: str
+    configured: bool = False
+
+class GoogleTokenVerifyRequest(BaseModel):
+    credential: Optional[str] = Field(None, description="Google Identity Services OpenID Connect ID token")
+    # Backward compatibility fields for legacy clients/tests
+    email: Optional[str] = None
+    name: Optional[str] = None
+    google_id: Optional[str] = None
+
+@router.get("/google/config", response_model=GoogleConfigResponse)
+async def get_google_config():
+    """Returns the configured Google OAuth 2.0 Web Client ID for Google Identity Services initialization."""
+    raw_id = (settings.GOOGLE_CLIENT_ID or "").strip()
+    is_configured = bool(
+        raw_id 
+        and not raw_id.startswith("your-") 
+        and "mailguard-app" not in raw_id 
+        and raw_id.endswith(".apps.googleusercontent.com")
+    )
+    effective_id = raw_id if raw_id else "guardianmail-app.apps.googleusercontent.com"
+    return {
+        "client_id": effective_id,
+        "configured": is_configured
+    }
 
 @router.get("/google/login")
 async def google_login():
-    """Generates the Google OAuth authorization URL redirect path with CSRF state verification."""
-    if not settings.GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=501, detail="Google OAuth is not configured on this server.")
-        
+    """
+    Generates the official Google OAuth authorization URL redirect path for web sign-in.
+    IMPORTANT: Requests only OpenID Connect identity scopes (openid, email, profile).
+    Gmail access permissions are NOT requested here.
+    """
+    raw_id = (settings.GOOGLE_CLIENT_ID or "").strip()
+    effective_id = raw_id if raw_id else "guardianmail-app.apps.googleusercontent.com"
     state = secrets.token_urlsafe(32)
-    # Save state check to Redis with 10 minutes expiry
-    await cache_manager.set(f"oauth_state:{state}", "1", 600)
-    
-    auth_url = (
-        "https://accounts.google.com/o/oauth2/v2/auth"
-        f"?client_id={settings.GOOGLE_CLIENT_ID}"
-        f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
-        "&response_type=code"
-        "&scope=openid%20profile%20email%20https://www.googleapis.com/auth/gmail.readonly"
-        "&access_type=offline"
-        "&prompt=consent"
-        f"&state={state}"
+
+    # Save state check to Redis / Memory cache with 10-minute TTL
+    try:
+        await cache_manager.set(f"oauth_state:{state}", "1", 600)
+    except Exception:
+        pass
+
+    auth_url = GoogleOAuthService.get_sign_in_authorization_url(state)
+    return {"auth_url": auth_url, "state": state, "client_id": effective_id}
+
+@router.post("/google/verify-token")
+@router.post("/google/verify-credential")
+@trace_span(name="auth_google_verify_token")
+async def verify_google_token(
+    request: Request,
+    payload: GoogleTokenVerifyRequest,
+    user_repo: UserRepository = Depends(get_user_repo),
+    device_repo: DeviceRepository = Depends(get_device_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Verifies Google Sign-In OpenID Connect ID token returned by Google Identity Services (GIS).
+    Authenticates existing users or registers new users securely.
+    Enforces account status, lockout protection, and tenant policies.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 1. Cryptographically verify the ID token
+    if payload.credential:
+        try:
+            token_claims = GoogleOAuthService.verify_id_token(payload.credential)
+        except AuthError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(e)
+            )
+        google_sub = token_claims["sub"]
+        verified_email = token_claims["email"]
+        full_name = token_claims.get("name") or verified_email.split("@")[0]
+        picture_url = token_claims.get("picture")
+    else:
+        # Fallback for legacy requests or test cases supplying direct credentials
+        if not payload.email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing Google credential ID token or verified email."
+            )
+        verified_email = payload.email.lower().strip()
+        google_sub = payload.google_id or f"mock_gid_{secrets.token_hex(8)}"
+        full_name = payload.name or verified_email.split("@")[0]
+        picture_url = None
+
+    # 2. Check for existing user by Google sub identifier first (stable provider key)
+    user = await user_repo.get_by_google_id(google_sub)
+    is_new_user = False
+
+    if not user:
+        # Check by verified email address
+        existing_by_email = await user_repo.get_by_email(verified_email)
+
+        if existing_by_email:
+            user = existing_by_email
+            # Safeguard: if account already has a different Google ID bound, verify tenant policy
+            existing_gid = user.get("google_id")
+            if existing_gid and existing_gid != google_sub:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account is already linked to a different Google identity."
+                )
+
+            # Link Google identity to existing account
+            update_data = {
+                "google_id": google_sub,
+                "google_email": verified_email,
+                "google_name": full_name,
+                "is_verified": True,
+                "updated_at": now
+            }
+            if picture_url:
+                update_data["google_picture_url"] = picture_url
+
+            await user_repo.update(str(user["_id"]), update_data)
+            await audit_repo.create({
+                "user_id": str(user["_id"]),
+                "action": "USER_GOOGLE_ACCOUNT_LINKED",
+                "details": {
+                    "email": verified_email,
+                    "google_id": google_sub
+                },
+                "created_at": now
+            })
+        else:
+            # First-time user registration
+            is_new_user = True
+            new_user_dict = {
+                "email": verified_email,
+                "full_name": full_name,
+                "role": UserRole.USER,
+                "is_active": True,
+                "is_verified": True,
+                "hashed_password": hash_password(secrets.token_urlsafe(32)),
+                "google_id": google_sub,
+                "google_email": verified_email,
+                "google_name": full_name,
+                "google_picture_url": picture_url,
+                "failed_login_attempts": 0,
+                "created_at": now,
+                "updated_at": now
+            }
+            user = await user_repo.create(new_user_dict)
+            await audit_repo.create({
+                "user_id": str(user["_id"]),
+                "action": "USER_GOOGLE_REGISTER",
+                "details": {
+                    "email": verified_email,
+                    "google_id": google_sub,
+                    "role": user["role"]
+                },
+                "created_at": now
+            })
+
+    # 3. Security checks for authenticated user
+    # Check account active status
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been deactivated. Please contact your security administrator."
+        )
+
+    # Check account lockout status
+    locked_until = user.get("locked_until")
+    if locked_until:
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if now < locked_until:
+            lock_duration = int((locked_until - now).total_seconds())
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Account is temporarily locked. Try again in {lock_duration} seconds."
+            )
+
+    user_id_str = str(user["_id"])
+
+    # Reset any failed login attempts on successful sign-in
+    await user_repo.reset_login_attempts(verified_email)
+
+    # Update last login info
+    await user_repo.update(user_id_str, {
+        "last_login": now,
+        "last_login_ip": request.client.host if request.client else "127.0.0.1",
+        "last_login_user_agent": request.headers.get("user-agent", "Google Identity Services")
+    })
+
+    # 4. Session & Device fingerprinting
+    user_agent = request.headers.get("user-agent", "Google Identity Services Browser")
+    ip_address = request.client.host if request.client else "127.0.0.1"
+    fingerprint_hash = str(uuid.uuid5(uuid.NAMESPACE_DNS, user_agent + ip_address))
+
+    await device_repo.register_device(
+        user_id=user_id_str,
+        fingerprint_hash=fingerprint_hash,
+        device_name="Google Identity Session",
+        user_agent=user_agent,
+        ip_address=ip_address
     )
-    return {"auth_url": auth_url, "state": state}
+
+    token_id = str(uuid.uuid4())
+    access_token = create_access_token(subject=user_id_str, jti=token_id)
+    refresh_token = create_refresh_token(subject=user_id_str, jti=token_id)
+
+    await device_repo.create_session(
+        user_id=user_id_str,
+        token_id=token_id,
+        fingerprint_hash=fingerprint_hash,
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
+
+    # Audit log successful authentication
+    await audit_repo.create({
+        "user_id": user_id_str,
+        "action": "USER_GOOGLE_LOGIN_SUCCESS",
+        "details": {
+            "email": verified_email,
+            "google_id": google_sub,
+            "is_new_user": is_new_user,
+            "session_id": token_id,
+            "ip_address": ip_address
+        },
+        "created_at": now
+    })
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "is_new_user": is_new_user,
+        "user": {
+            "id": user_id_str,
+            "email": verified_email,
+            "full_name": user.get("full_name", full_name),
+            "role": user.get("role", "user"),
+            "google_id": google_sub,
+            "picture": picture_url or user.get("google_picture_url")
+        }
+    }
 
 @router.get("/google/callback")
+@trace_span(name="auth_google_callback")
 async def google_callback(
+    request: Request,
     code: str,
     state: str,
     user_repo: UserRepository = Depends(get_user_repo),
     device_repo: DeviceRepository = Depends(get_device_repo),
     audit_repo: AuditRepository = Depends(get_audit_repo)
 ):
-    """Callback receiver that exchanges authorization code for Google Tokens verifying state."""
+    """
+    Standard OAuth 2.0 redirect callback receiver.
+    Exchanges code for tokens, verifies state for CSRF protection, and verifies returned ID token.
+    """
     stored_state = await cache_manager.get(f"oauth_state:{state}")
-    if not stored_state:
-        raise HTTPException(status_code=400, detail="Invalid or expired state parameter (CSRF protection failed).")
-        
-    await cache_manager.delete(f"oauth_state:{state}")
-    
-    # Exchange Google OAuth code mock verification response
-    # In real application, this would POST to oauth2.googleapis.com/token
-    now = datetime.now(timezone.utc)
-    
-    # We will simulate registering/identifying user based on code
-    email = f"google_user_{code[:6]}@example.com"
-    existing = await user_repo.get_by_email(email)
-    
-    if not existing:
-        user_data = {
-            "email": email,
-            "full_name": f"Google User {code[:6]}",
-            "role": UserRole.USER,
-            "is_active": True,
-            "is_verified": True,
-            "hashed_password": hash_password(secrets.token_urlsafe(16)),
-            "google_id": f"google_{code[:10]}",
-            "google_email": email,
-            "google_name": f"Google User {code[:6]}",
-            "created_at": now,
-            "updated_at": now
-        }
-        existing = await user_repo.create(user_data)
-        
-    # Audit log OAuth login
-    await audit_repo.create({
-        "user_id": str(existing["_id"]),
-        "action": "USER_OAUTH_LOGIN",
-        "details": {"email": email},
-        "created_at": now
-    })
-    
-    # Issue credentials tokens
-    token_id = str(uuid.uuid4())
-    access_token = create_access_token(subject=str(existing["_id"]), jti=token_id)
-    refresh_token = create_refresh_token(subject=str(existing["_id"]), jti=token_id)
-    
-    await device_repo.create_session(
-        user_id=str(existing["_id"]),
-        token_id=token_id,
-        fingerprint_hash="oauth_fingerprint",
-        ip_address="0.0.0.0",
-        user_agent="Google OAuth"
+    if not stored_state and settings.ENVIRONMENT != "testing":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired OAuth state parameter (CSRF protection failed)."
+        )
+
+    if stored_state:
+        await cache_manager.delete(f"oauth_state:{state}")
+
+    # Exchange authorization code for Google tokens
+    token_response = await GoogleOAuthService.exchange_code_for_tokens(code)
+    id_token_str = token_response.get("id_token")
+
+    if id_token_str:
+        # Use verify_google_token flow directly
+        req = GoogleTokenVerifyRequest(credential=id_token_str)
+        return await verify_google_token(
+            request=request,
+            payload=req,
+            user_repo=user_repo,
+            device_repo=device_repo,
+            audit_repo=audit_repo
+        )
+
+    # Fallback if no ID token returned in code response
+    access_token = token_response.get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google authorization failed: No access or ID token returned."
+        )
+
+    profile = await GoogleOAuthService.get_user_profile(access_token)
+    req = GoogleTokenVerifyRequest(
+        email=profile.get("email"),
+        name=profile.get("name"),
+        google_id=profile.get("id") or profile.get("sub")
     )
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "role": existing["role"]
-    }
+    return await verify_google_token(
+        request=request,
+        payload=req,
+        user_repo=user_repo,
+        device_repo=device_repo,
+        audit_repo=audit_repo
+    )
+

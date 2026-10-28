@@ -59,7 +59,7 @@ class ContentLengthLimitMiddleware(BaseHTTPMiddleware):
                     if int(content_length) > self.max_content_length:
                         return Response(
                             content="Payload Too Large: Maximum allowed size is 10MB.",
-                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+                            status_code=status.HTTP_413_CONTENT_TOO_LARGE
                         )
                 except ValueError:
                     return Response(

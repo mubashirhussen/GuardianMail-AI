@@ -73,11 +73,15 @@ class Campaign(BaseMongoModel):
     campaign_id: str
     name: str
     description: str
+    status: str = Field("SUSPECTED")  # SUSPECTED, UNDER_REVIEW, CONFIRMED, DISMISSED, CLOSED
     confidence: str = Field("medium")
     indicators: List[str] = Field(default_factory=list)
     affected_users: List[str] = Field(default_factory=list)
     related_incidents: List[str] = Field(default_factory=list)
+    related_investigations: List[str] = Field(default_factory=list)
+    notes: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: datetime
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     soft_delete: bool = False
 
     class Config:

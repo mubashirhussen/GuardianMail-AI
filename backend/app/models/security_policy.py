@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import Field
+from pydantic import Field, ConfigDict
 from app.models.base import BaseMongoModel
 
 class SecurityPolicy(BaseMongoModel):
@@ -19,9 +19,7 @@ class SecurityPolicy(BaseMongoModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 class PolicyVersion(BaseMongoModel):
     """Immutable snapshot repository storing previous versions of active policies."""
@@ -33,9 +31,7 @@ class PolicyVersion(BaseMongoModel):
     created_at: datetime
     reason: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 class PolicyApproval(BaseMongoModel):
     """Approval request workflows tracking compliance signatures for sensitive changes."""
@@ -47,9 +43,7 @@ class PolicyApproval(BaseMongoModel):
     status: str = "pending" # pending, approved, rejected
     reason: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 class PolicySimulation(BaseMongoModel):
     """Simulation run results validating proposed rules against test threat vectors."""
@@ -60,9 +54,7 @@ class PolicySimulation(BaseMongoModel):
     explanation: List[str]
     simulated_at: datetime
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 class PolicyAuditEvent(BaseMongoModel):
     """Audit ledger tracking changes to security policy configurations."""
@@ -73,6 +65,4 @@ class PolicyAuditEvent(BaseMongoModel):
     details: Dict[str, Any]
     timestamp: datetime
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

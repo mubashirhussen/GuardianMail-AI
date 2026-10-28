@@ -1,161 +1,500 @@
-import React, { useState } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { ShieldCheck, Lock, Mail, Eye, EyeOff, ShieldAlert } from 'lucide-react';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { ForgotPasswordModal } from '../components/ForgotPasswordModal';
+import { OTPInput } from '../components/OTPInput';
+import { authService } from '../services/auth';
+import {
+  Shield,
+  Mail,
+  UserCheck,
+  Loader2
+} from 'lucide-react';
 
 export const Login: React.FC = () => {
-  const { login } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { login, loginWithGoogle } = useAuth();
+
+  // Active Tab matching the reference: 'gmail' | 'signin' | 'new'
+  const [activeTab, setActiveTab] = useState<'gmail' | 'signin' | 'new'>('signin');
+
+  // Sign In & Registration form states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Gmail Verify (OTP Challenge) state
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [maskedDest, setMaskedDest] = useState('');
+
+  // UI status
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Retrieve previous page context to redirect user after successful login
-  const from = (location.state as any)?.from?.pathname || '/';
+  // Forgot password modal
+  const [forgotModalOpen, setForgotModalOpen] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Handle URL banner parameters (session_expired, logged_out, oauth errors)
+  useEffect(() => {
+    const reason = searchParams.get('reason');
+    const oauthError = searchParams.get('error');
+
+    if (reason === 'session_expired') {
+      setError('Your session has expired for security. Please sign in again.');
+    } else if (reason === 'logged_out') {
+      setSuccessMsg('You have been securely signed out.');
+    } else if (oauthError) {
+      setError(`Authentication provider error: ${oauthError.replace(/_/g, ' ')}`);
+    }
+  }, [searchParams]);
+
+  const extractErrorMessage = (err: any, fallbackMessage: string): string => {
+    if (err?.code === 'ERR_NETWORK' || err?.message === 'Network Error' || (!err?.response && err?.request)) {
+      return 'Cannot connect to MailGuard authentication server. Please ensure the backend is running on port 8000.';
+    }
+    const detail = err?.response?.data?.detail;
+    if (detail) {
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail) && detail[0]?.msg) return detail[0].msg;
+      return String(detail);
+    }
+    return err?.message || fallbackMessage;
+  };
+
+  // Handle standard password sign-in
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError('Please provide both email and password.');
+    if (!email.trim() || !password) {
+      setError('Please enter your email and password.');
       return;
     }
+
     setError(null);
     setLoading(true);
 
     try {
-      await login({ email, password });
-      navigate(from, { replace: true });
+      await login({ identifier: email.trim(), password });
+      navigate('/');
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Authentication failed. Please verify credentials.';
-      setError(msg);
+      setError(extractErrorMessage(err, 'Incorrect email or password.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle new account registration
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fullName.trim() || !email.trim() || !password) {
+      setError('Please fill in all required fields.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
+
+    try {
+      await authService.register({
+        full_name: fullName.trim(),
+        email: email.trim(),
+        password,
+      });
+      // Move to verification tab
+      setVerifyEmail(email.trim());
+      setOtpSent(true);
+      setActiveTab('gmail');
+      setSuccessMsg(`Verification code sent to ${email.trim()}`);
+    } catch (err: any) {
+      if (err?.code === 'ERR_NETWORK' || err?.message === 'Network Error' || (!err?.response && err?.request)) {
+        setError('Cannot connect to MailGuard authentication server. Please ensure the backend is running on port 8000.');
+      } else if (err?.response?.status === 400 && String(err?.response?.data?.detail).toLowerCase().includes('already exists')) {
+        setError('This email is already registered. Please sign in or use password recovery.');
+      } else {
+        setError(extractErrorMessage(err, 'Registration could not be completed. Please try again.'));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Gmail Verify code dispatch
+  const handleSendGmailCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetEmail = (verifyEmail || email).trim();
+    if (!targetEmail) {
+      setError('Please enter your email address to receive a verification code.');
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
+
+    try {
+      const res = await authService.sendEmailCode(targetEmail, 'login_step_up');
+      setMaskedDest(res.destination);
+      setOtpSent(true);
+      setSuccessMsg(`6-digit code dispatched to ${res.destination}`);
+    } catch (err: any) {
+      setError(extractErrorMessage(err, 'Failed to send verification code. Please check server configuration.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle OTP verification completion
+  const handleVerifyOtpComplete = async (code: string) => {
+    const targetEmail = (verifyEmail || email).trim();
+    setError(null);
+    setLoading(true);
+
+    try {
+      await authService.verifyEmailCode(targetEmail, code, 'login_step_up');
+      navigate('/');
+    } catch (err: any) {
+      setError(extractErrorMessage(err, 'Invalid or expired verification code.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Google Identity Services credential
+  const handleGoogleSuccess = async (credential: string) => {
+    setError(null);
+    setLoading(true);
+    try {
+      await loginWithGoogle(credential);
+      navigate('/');
+    } catch (err: any) {
+      setError(extractErrorMessage(err, 'Google sign-in failed. Please try again.'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 relative overflow-hidden font-sans">
-      {/* Background cyber ambient grid lights */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-35" />
-      <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full bg-cyan-500/10 blur-3xl" />
-      <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full bg-blue-600/10 blur-3xl" />
-
-      {/* Main Login Card */}
-      <div className="relative w-full max-w-md bg-slate-900/60 backdrop-blur-xl border border-slate-800 p-8 rounded-2xl shadow-2xl space-y-6">
-        
-        {/* Header Branding */}
-        <div className="flex flex-col items-center text-center space-y-2">
-          <div className="h-12 w-12 rounded-xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)] animate-pulse">
-            <ShieldCheck className="h-6 w-6 text-cyan-400" />
+    <div className="min-h-screen w-full bg-[#070b14] flex items-center justify-center p-4 sm:p-6 font-sans antialiased text-slate-100 selection:bg-emerald-500 selection:text-slate-950">
+      {/* Centered Structured Cybersecurity Card */}
+      <div className="w-full max-w-[480px] bg-[#0c1424] border border-[#16233b] rounded-2xl p-7 sm:p-8 shadow-2xl relative">
+        {/* 1. Header: Shield Icon + MailGuard Title */}
+        <div className="flex items-center gap-3.5 mb-6">
+          <div className="h-12 w-12 rounded-xl bg-[#082224] border border-[#0d4a4d] flex items-center justify-center text-[#10b981] shadow-lg shadow-emerald-950/40 shrink-0">
+            <Shield className="h-6 w-6 stroke-[1.8]" />
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-100">
-            GuardianMail <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">AI</span>
-          </h2>
-          <p className="text-xs text-slate-500 max-w-[280px]">
-            Enterprise AI-Powered Email Threat Forensics & Response Console
-          </p>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-white leading-tight">MailGuard</h1>
+            <p className="text-xs font-mono text-slate-400 mt-0.5 tracking-wider">Sign in to your dashboard</p>
+          </div>
         </div>
 
-        {/* Error Notification */}
-        {error && (
-          <div className="flex items-center gap-3 p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg animate-shake">
-            <ShieldAlert className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
+        {/* 2. Official Google Identity Services Button */}
+        <div className="mb-6">
+          <GoogleSignInButton
+            onSuccess={handleGoogleSuccess}
+            onError={(err) => setError(err || 'Google sign-in was cancelled or failed.')}
+            text="continue_with"
+          />
+        </div>
+
+        {/* 3. Divider: OR */}
+        <div className="relative my-6 flex items-center justify-center">
+          <div className="w-full border-t border-[#16233b]" />
+          <span className="absolute px-3 bg-[#0c1424] text-[10px] font-mono tracking-widest text-slate-500 uppercase">
+            OR
+          </span>
+        </div>
+
+        {/* 4. Segmented Navigation Tabs */}
+        <div className="bg-[#070d18] border border-[#162238] rounded-xl p-1 grid grid-cols-3 gap-1 mb-6">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('gmail');
+              setError(null);
+            }}
+            className={`py-2 text-[11px] font-mono tracking-wider font-semibold rounded-lg transition-all text-center ${
+              activeTab === 'gmail'
+                ? 'bg-[#131d33] text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            GMAIL VERIFY
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('signin');
+              setError(null);
+            }}
+            className={`py-2 text-[11px] font-mono tracking-wider font-semibold rounded-lg transition-all text-center ${
+              activeTab === 'signin'
+                ? 'bg-[#131d33] text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            SIGN IN
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('new');
+              setError(null);
+            }}
+            className={`py-2 text-[11px] font-mono tracking-wider font-semibold rounded-lg transition-all text-center ${
+              activeTab === 'new'
+                ? 'bg-[#131d33] text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            NEW ACCOUNT
+          </button>
+        </div>
+
+        {/* Success Message Banner */}
+        {successMsg && (
+          <div className="mb-4 p-3 rounded-xl border border-emerald-500/50 bg-emerald-950/20 text-emerald-400 font-mono text-xs flex items-center justify-between">
+            <span>{successMsg}</span>
+            <button onClick={() => setSuccessMsg(null)} className="text-slate-400 hover:text-white font-bold ml-2">×</button>
           </div>
         )}
 
-        {/* Credentials Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Corporate Email Address
-            </label>
-            <div className="relative">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+        {/* Error Alert Box (matching Image 2 design) */}
+        {error && (
+          <div className="mb-4 p-3 rounded-xl border border-red-500/70 bg-red-950/20 text-red-400 font-mono text-xs flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-slate-400 hover:text-white font-bold ml-2">×</button>
+          </div>
+        )}
+
+        {/* 5. TAB: SIGN IN (Matches Image 2 exactly) */}
+        {activeTab === 'signin' && (
+          <form onSubmit={handleSignIn} className="space-y-4">
+            <div>
+              <label htmlFor="login-email" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 font-semibold">
+                EMAIL ADDRESS
+              </label>
               <input
-                type="email"
-                required
+                id="login-email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="analyst@guardianmail.ai"
-                className="w-full bg-slate-950/60 border border-slate-800 rounded-lg pl-11 pr-4 py-2.5 text-sm text-slate-150 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/50 outline-none transition-all placeholder:text-slate-600"
+                placeholder="mubashirsk381@gmail.com"
+                required
+                autoComplete="username"
+                className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
               />
             </div>
-          </div>
 
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Password
-              </label>
-              <a href="#" className="text-[10px] text-cyan-500 hover:text-cyan-400 transition">
-                Forgot password?
-              </a>
-            </div>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label htmlFor="login-password" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
+                  PASSWORD (MIN 8 CHARS)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForgotModalOpen(true)}
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono transition-colors"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <input
-                type={showPassword ? 'text' : 'password'}
-                required
+                id="login-password"
+                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••••"
-                className="w-full bg-slate-950/60 border border-slate-800 rounded-lg pl-11 pr-11 py-2.5 text-sm text-slate-150 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/50 outline-none transition-all placeholder:text-slate-600"
+                required
+                autoComplete="current-password"
+                className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-400 transition"
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
             </div>
+
+            {/* Primary Sign In Button (Vibrant Emerald matching Image 2) */}
+            <button
+              id="signin-submit-btn"
+              data-testid="signin-submit-btn"
+              type="submit"
+              disabled={loading}
+              className="w-full mt-5 py-3.5 px-4 bg-[#10b981] hover:bg-[#059669] active:bg-[#047857] text-slate-950 font-bold text-sm rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 transition cursor-pointer disabled:opacity-50"
+            >
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
+              ) : (
+                <>
+                  <Mail className="h-4 w-4 stroke-[2.2] text-slate-950" />
+                  <span>Sign In</span>
+                </>
+              )}
+            </button>
+          </form>
+        )}
+
+        {/* 6. TAB: GMAIL VERIFY (Multi-channel OTP Verification) */}
+        {activeTab === 'gmail' && (
+          <div className="space-y-4">
+            {!otpSent ? (
+              <form onSubmit={handleSendGmailCode} className="space-y-4">
+                <div>
+                  <label htmlFor="verify-email" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 font-semibold">
+                    EMAIL OR PHONE FOR VERIFICATION
+                  </label>
+                  <input
+                    id="verify-email"
+                    type="text"
+                    value={verifyEmail || email}
+                    onChange={(e) => setVerifyEmail(e.target.value)}
+                    placeholder="analyst@guardianmail.ai"
+                    required
+                    className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-5 py-3.5 px-4 bg-[#10b981] hover:bg-[#059669] active:bg-[#047857] text-slate-950 font-bold text-sm rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 transition cursor-pointer disabled:opacity-50"
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
+                  ) : (
+                    <>
+                      <Mail className="h-4 w-4 stroke-[2.2] text-slate-950" />
+                      <span>Send Verification Code</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            ) : (
+              <div className="space-y-4 pt-1">
+                <OTPInput
+                  recipientText={maskedDest || verifyEmail || email}
+                  onComplete={handleVerifyOtpComplete}
+                  isLoading={loading}
+                  error={error}
+                  onResend={async () => {
+                    const target = (verifyEmail || email).trim();
+                    await authService.sendEmailCode(target, 'login_step_up');
+                  }}
+                />
+                <div className="text-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setOtpSent(false)}
+                    className="text-xs text-slate-400 hover:text-emerald-400 transition-colors font-mono"
+                  >
+                    ← Change destination address
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+        )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-semibold py-2.5 rounded-lg text-sm transition-all duration-150 active:scale-[0.98] shadow-[0_0_20px_rgba(6,182,212,0.15)] hover:shadow-[0_0_25px_rgba(6,182,212,0.3)] disabled:opacity-50 disabled:pointer-events-none"
-          >
-            {loading ? 'Authenticating...' : 'Establish Session'}
-          </button>
-        </form>
+        {/* 7. TAB: NEW ACCOUNT */}
+        {activeTab === 'new' && (
+          <form onSubmit={handleRegister} className="space-y-4">
+            <div>
+              <label htmlFor="reg-name" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 font-semibold">
+                FULL NAME
+              </label>
+              <input
+                id="reg-name"
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Jane Doe"
+                required
+                className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
+              />
+            </div>
 
-        <div className="relative flex py-2 items-center">
-          <div className="flex-grow border-t border-slate-800"></div>
-          <span className="flex-shrink mx-4 text-[10px] uppercase text-slate-600 tracking-wider font-semibold">Or authentication portals</span>
-          <div className="flex-grow border-t border-slate-800"></div>
-        </div>
+            <div>
+              <label htmlFor="reg-email" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 font-semibold">
+                WORK EMAIL ADDRESS
+              </label>
+              <input
+                id="reg-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="jane.doe@enterprise.com"
+                required
+                className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
+              />
+            </div>
 
-        {/* Alternative Auth Triggers */}
-        <div className="grid grid-cols-1 gap-3">
-          <button
-            type="button"
-            className="w-full bg-slate-950/40 border border-slate-800 hover:bg-slate-800/30 text-slate-300 font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-2 transition"
-            onClick={() => {
-              // Trigger redirect to Google Auth callback
-              window.location.href = '/api/v1/auth/google/login';
-            }}
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.568 0-6.46-2.892-6.46-6.46 0-3.567 2.892-6.459 6.46-6.459 1.54 0 2.943.543 4.053 1.44l3.153-3.153C19.167 2.012 15.938 1 12.24 1a11 11 0 0 0-11 11 11 11 0 0 0 11 11c5.96 0 10.973-4.28 10.973-11 0-.743-.075-1.44-.22-2.115H12.24Z" />
-            </svg>
-            Continue with Google Single Sign-On
-          </button>
-        </div>
+            <div>
+              <label htmlFor="reg-password" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 font-semibold">
+                PASSWORD (MIN 8 CHARS)
+              </label>
+              <input
+                id="reg-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+                required
+                className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
+              />
+            </div>
 
-        {/* Navigation Footer */}
-        <p className="text-center text-xs text-slate-500">
-          Need an analyst account?{' '}
-          <Link to="/register" className="text-cyan-500 hover:text-cyan-400 font-semibold transition">
-            Register here
-          </Link>
+            <div>
+              <label htmlFor="reg-confirm-password" className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 font-semibold">
+                CONFIRM PASSWORD
+              </label>
+              <input
+                id="reg-confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••••••"
+                required
+                className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full mt-5 py-3.5 px-4 bg-[#10b981] hover:bg-[#059669] active:bg-[#047857] text-slate-950 font-bold text-sm rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 transition cursor-pointer disabled:opacity-50"
+            >
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
+              ) : (
+                <>
+                  <UserCheck className="h-4 w-4 stroke-[2.2] text-slate-950" />
+                  <span>Create Account & Verify</span>
+                </>
+              )}
+            </button>
+          </form>
+        )}
+
+        {/* 8. Card Footer Note (Matches Image 2 exactly) */}
+        <p className="mt-6 text-xs text-slate-500 leading-relaxed font-sans">
+          Your account is stored securely in MailGuard Cloud. Mail scan history is cached on this device for fast access and is wiped when you sign out.
         </p>
-
       </div>
+
+      {/* Forgot Password Modal */}
+      <ForgotPasswordModal
+        isOpen={forgotModalOpen}
+        onClose={() => setForgotModalOpen(false)}
+        initialEmail={email}
+      />
     </div>
   );
 };

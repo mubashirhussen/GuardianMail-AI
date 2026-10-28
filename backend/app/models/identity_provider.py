@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from app.models.base import BaseMongoModel
-from pydantic import Field
+from pydantic import Field, ConfigDict
 from app.security.secrets import secrets_manager
 
 class IdentityProvider(BaseMongoModel):
@@ -26,9 +26,7 @@ class IdentityProvider(BaseMongoModel):
     
     allowed_domains: List[str] = Field(default_factory=list)
     
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
     def __init__(self, **data: Any):
         client_sec = data.pop("client_secret", None)

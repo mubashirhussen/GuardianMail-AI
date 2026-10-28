@@ -82,9 +82,38 @@ class ContextBuilder:
             data["policies"] = policies[:5]
 
         elif intent == "CAMPAIGN_ANALYSIS":
-            # Retrieve campaigns list
-            campaigns = await CopilotTools.search_campaigns(context, "")
-            data["campaigns"] = campaigns[:5]
+            # Retrieve active campaigns from campaigns collection
+            from app.services.campaign_service import campaign_service
+            camps = await campaign_service.campaign_repo.get_by_org(context.organization_id)
+            data["campaigns"] = [{
+                "campaign_id": c.get("campaign_id"),
+                "name": c.get("name"),
+                "description": c.get("description"),
+                "status": c.get("status"),
+                "confidence": c.get("confidence"),
+                "indicators": c.get("indicators"),
+                "related_investigations": c.get("related_investigations")
+            } for c in camps[:5]]
+
+        elif intent == "MITRE_ANALYSIS":
+            # Search for technique IDs in the query (e.g. T1566)
+            tech_matches = re.findall(r'[tT]\d{4}(?:\.\d{3})?', query)
+            if tech_matches:
+                tech = await CopilotTools.get_mitre_technique(context, tech_matches[0])
+                if tech:
+                    data["mitre_technique"] = tech
+            # Fetch active detection rules with MITRE technique mapping
+            cursor = db_manager.db["detection_rules"].find({
+                "organization_id": context.organization_id,
+                "is_active": True,
+                "mitre_technique": {"$exists": True}
+            })
+            rules = await cursor.to_list(length=5)
+            data["active_mitre_rules"] = [{
+                "rule_id": r.get("rule_id"),
+                "name": r.get("name"),
+                "mitre_technique": r.get("mitre_technique")
+            } for r in rules]
 
         elif intent == "INCIDENT_SUMMARY" or intent == "THREAT_EXPLANATION":
             # Look for IDs in the query matching ObjectId format
@@ -98,6 +127,24 @@ class ContextBuilder:
                         "risk_score": incident.get("analysis", {}).get("risk_score"),
                         "verdict": incident.get("analysis", {}).get("verdict"),
                         "indicators": [ind.get("indicator") for ind in incident.get("analysis", {}).get("indicators", [])]
+                    }
+
+        elif intent == "INVESTIGATION_SUMMARY":
+            oid_matches = re.findall(r'[a-fA-F0-9]{24}', query)
+            if oid_matches:
+                from app.services.investigation_service import investigation_service
+                workspace = await investigation_service.get_investigation_workspace(context.organization_id, oid_matches[0])
+                if workspace:
+                    inv = workspace.get("investigation", {})
+                    data["investigation_evidence"] = {
+                        "title": inv.get("title"),
+                        "status": inv.get("status"),
+                        "severity": inv.get("severity"),
+                        "priority": inv.get("priority"),
+                        "evidence_count": len(workspace.get("evidence", [])),
+                        "entities_count": len(workspace.get("entities", [])),
+                        "relationships_count": len(workspace.get("relationships", [])),
+                        "timeline_count": len(workspace.get("timeline", []))
                     }
         
         return data

@@ -571,5 +571,398 @@ def expire_iocs_task() -> dict:
         logger.error(f"IOC expiration task failed: {str(exc)}")
         return {"status": "failed", "error": str(exc)}
 
+async def _run_detection_test_async(org_id: str, test_id: str, user_id: str) -> dict:
+    from app.services.detection_testing_service import detection_testing_service
+    from app.core.database import db_manager
+    from bson import ObjectId
+    from datetime import datetime, timezone
+    
+    if db_manager.db is None:
+        await db_manager.connect()
+        
+    try:
+        res = await detection_testing_service.execute_test_lifecycle(org_id, test_id, user_id)
+        if isinstance(res, dict) and "_id" in res:
+            res["_id"] = str(res["_id"])
+        return {"status": "success", "result": res}
+    except Exception as e:
+        logger.error(f"Detection test execution failed for {test_id}: {str(e)}")
+        await db_manager.db["detection_tests"].update_one(
+            {"_id": ObjectId(test_id) if ObjectId.is_valid(test_id) else test_id},
+            {"$set": {"status": "ERROR", "updated_at": datetime.now(timezone.utc)}}
+        )
+        return {"status": "failed", "error": str(e)}
+
+@celery_app.task(name="tasks.run_detection_test_task")
+def run_detection_test_task(org_id: str, test_id: str, user_id: str) -> dict:
+    """Celery background task for running detection testing (Module E11.2)."""
+    return run_async(_run_detection_test_async(org_id, test_id, user_id))
+
+async def _run_production_detections_async(org_id: str, event_id: str) -> dict:
+    from app.services.detection_execution_service import detection_execution_service
+    from app.core.database import db_manager
+    from datetime import datetime, timezone
+    
+    if db_manager.db is None:
+        await db_manager.connect()
+        
+    try:
+        findings = await detection_execution_service.execute_telemetry_detections(org_id, event_id)
+        clean_findings = []
+        for f in findings:
+            clean_f = f.copy()
+            if "_id" in clean_f:
+                clean_f["_id"] = str(clean_f["_id"])
+            clean_findings.append(clean_f)
+        return {"status": "success", "findings_count": len(clean_findings), "findings": clean_findings}
+    except Exception as e:
+        logger.error(f"Production detection execution failed for event {event_id}: {str(e)}")
+        await db_manager.db["audit_logs"].insert_one({
+            "organization_id": org_id,
+            "action": "DETECTION_EXECUTION_FAILED",
+            "actor": "system_worker",
+            "details": {"event_id": event_id, "error": str(e)},
+            "timestamp": datetime.now(timezone.utc),
+            "soft_delete": False
+        })
+        return {"status": "failed", "error": str(e)}
+
+@celery_app.task(name="tasks.run_production_detections_task")
+def run_production_detections_task(org_id: str, event_id: str) -> dict:
+    """Celery background task for production detection execution (Module E11.3)."""
+    return run_async(_run_production_detections_async(org_id, event_id))
+
+async def _run_investigation_correlation_async(org_id: str, investigation_id: str) -> dict:
+    from app.services.investigation_service import investigation_service
+    from app.core.database import db_manager
+    if db_manager.db is None:
+        await db_manager.connect()
+    try:
+        return await investigation_service.correlate_investigation(org_id, investigation_id)
+    except Exception as e:
+        logger.error(f"Async correlation failed for investigation {investigation_id}: {str(e)}")
+        return {"status": "failed", "error": str(e)}
+
+@celery_app.task(name="tasks.run_investigation_correlation_task")
+def run_investigation_correlation_task(org_id: str, investigation_id: str) -> dict:
+    """Celery background task for multi-signal investigation correlation (Module E11.5)."""
+    return run_async(_run_investigation_correlation_async(org_id, investigation_id))
+
+async def _run_campaign_correlation_async(org_id: str) -> dict:
+    from app.services.campaign_service import campaign_service
+    from app.core.database import db_manager
+    if db_manager.db is None:
+        await db_manager.connect()
+    try:
+        return await campaign_service.run_campaign_correlation_scan(org_id)
+    except Exception as e:
+        logger.error(f"Async campaign correlation scan failed for org {org_id}: {str(e)}")
+        return {"status": "failed", "error": str(e)}
+
+@celery_app.task(name="tasks.run_campaign_correlation_task")
+def run_campaign_correlation_task(org_id: str) -> dict:
+    """Celery background task for multi-signal campaign correlation scanning (Module E11.6)."""
+    return run_async(_run_campaign_correlation_async(org_id))
+
+async def _sweep_expired_indicators_async() -> dict:
+    import time
+    from datetime import datetime, timezone
+    from app.core.database import db_manager
+    if db_manager.db is None:
+        await db_manager.connect()
+    
+    start_time = time.perf_counter()
+    now = datetime.now(timezone.utc)
+    
+    try:
+        cursor = db_manager.db["threat_indicators"].find({
+            "status": "ACTIVE",
+            "expires_at": {"$lt": now},
+            "soft_delete": False
+        })
+        expired_iocs = await cursor.to_list(length=1000)
+        
+        expired_count = 0
+        for ioc in expired_iocs:
+            await db_manager.db["threat_indicators"].update_one(
+                {"_id": ioc["_id"]},
+                {"$set": {"status": "EXPIRED", "updated_at": now}}
+            )
+            expired_count += 1
+            
+            await db_manager.db["audit_logs"].insert_one({
+                "organization_id": ioc.get("organization_id") or "system_global",
+                "user_id": "system_celery_sweep",
+                "action": "THREAT_INDICATOR_EXPIRED",
+                "details": {
+                    "indicator_id": str(ioc["_id"]),
+                    "value": ioc.get("normalized_value"),
+                    "indicator_type": ioc.get("indicator_type")
+                },
+                "created_at": now
+            })
+            
+        elapsed = (time.perf_counter() - start_time) * 1000
+        logger.info(f"SSRF/TTL Sweep complete. Inspected {len(expired_iocs)} candidates, expired {expired_count} indicators in {elapsed:.2f}ms.")
+        return {
+            "status": "SUCCESS",
+            "inspected": len(expired_iocs),
+            "expired": expired_count,
+            "duration_ms": elapsed
+        }
+    except Exception as e:
+        logger.error(f"TTL Expiration sweep failed: {str(e)}")
+        return {"status": "FAILED", "error": str(e)}
+
+@celery_app.task(name="tasks.sweep_expired_indicators_task")
+def sweep_expired_indicators_task() -> dict:
+    """Celery scheduled Beat task sweeping expired threat intelligence indicators daily (E11.7)."""
+    return run_async(_sweep_expired_indicators_async())
+
+async def _soar_execution_async(execution_id: str) -> dict:
+    """Async background worker task to resolve playbook, integrations, and execute simulated SOAR action with retries."""
+    import time
+    import socket
+    from datetime import timezone
+    from bson import ObjectId
+    from app.services.integration_service import integration_service
+    from app.services.soar_execution_service import soar_execution_service
+    
+    start_time = time.perf_counter()
+    
+    # 1. Connect database if lifecycle isn't active
+    if db_manager.db is None:
+        await db_manager.connect()
+        
+    db = db_manager.db
+
+    # 2. Retrieve execution request
+    exec_doc = await db["soar_execution_requests"].find_one({
+        "execution_id": execution_id,
+        "soft_delete": {"$ne": True}
+    })
+    if not exec_doc:
+        logger.error(f"Celery SOAR execution request not found: {execution_id}")
+        return {"status": "FAILED", "error": "Execution request not found"}
+
+    # If the task is already in a terminal state, return it immediately to prevent duplicate runs
+    status = exec_doc.get("status", "QUEUED")
+    if status in ["SUCCESS", "PARTIAL_SUCCESS", "EXHAUSTED", "CANCELLED"]:
+        logger.info(f"Execution request {execution_id} is already in terminal state '{status}'. Bypassing execution.")
+        return {"status": status, "execution_id": execution_id}
+
+    org_id = exec_doc["organization_id"]
+    decision_id = exec_doc["response_decision_id"]
+    action = exec_doc["recommended_action"]
+    playbook_id = exec_doc["playbook_id"]
+
+    try:
+        # 3. Transition state to VALIDATING
+        await soar_execution_service.transition_status(
+            organization_id=org_id,
+            execution_id=execution_id,
+            to_status="VALIDATING"
+        )
+
+        # 4. Resolve E6 Active Playbook from soar_playbooks (or default fallback check)
+        playbook = await db["soar_playbooks"].find_one({
+            "organization_id": org_id,
+            "playbook_id": playbook_id,
+            "status": "ENABLED",
+            "soft_delete": {"$ne": True}
+        })
+        if not playbook and playbook_id not in ["PLAYBOOK-EMAIL-QUARANTINE", "PLAYBOOK-HOST-ISOLATION", "PLAYBOOK-CREDENTIAL-RESET", "PLAYBOOK-BLOCK-INDICATOR", "PLAYBOOK-FALLBACK"]:
+            raise ValueError(f"Target playbook '{playbook_id}' is disabled or does not exist.")
+
+        # 5. Resolve active Integration connector for tenant
+        integration = await db["integrations"].find_one({
+            "organization_id": org_id,
+            "status": "ACTIVE",
+            "soft_delete": {"$ne": True}
+        })
+        if not integration:
+            raise ValueError("No active integrations configured.")
+
+        # Check enabled connector
+        if integration.get("status") != "ACTIVE":
+             raise ValueError("Target integration connector is disabled.")
+
+        playbook_name = playbook.get("playbook_name") if playbook else (playbook_id.replace("PLAYBOOK-", "").replace("-", " ").title() if playbook_id else "Fallback Playbook")
+        
+        # Update playbook name on request record
+        await db["soar_execution_requests"].update_one(
+            {"execution_id": execution_id},
+            {"$set": {"playbook_name": playbook_name}}
+        )
+
+    except Exception as eval_err:
+        completed_at = datetime.now(timezone.utc)
+        error_msg = str(eval_err)
+        error_code = "VALIDATION_FAILURE" if "playbook" in error_msg.lower() else "CONNECTOR_UNAVAILABLE"
+        
+        # Transition from VALIDATING to FAILED
+        await soar_execution_service.transition_status(
+            organization_id=org_id,
+            execution_id=execution_id,
+            to_status="FAILED",
+            error_code=error_code,
+            error_message=error_msg,
+            is_retryable=False
+        )
+        
+        # Transition from FAILED to EXHAUSTED (since validation issues are non-retryable)
+        await soar_execution_service.transition_status(
+            organization_id=org_id,
+            execution_id=execution_id,
+            to_status="EXHAUSTED",
+            error_code=error_code,
+            error_message=f"Validation failed permanently: {error_msg}",
+            is_retryable=False
+        )
+        return {"status": "FAILED", "error": f"Validation failed: {error_msg}"}
+
+    try:
+        # Transition to RUNNING
+        await soar_execution_service.transition_status(
+            organization_id=org_id,
+            execution_id=execution_id,
+            to_status="RUNNING"
+        )
+
+        # 6. Execute simulated containment action via Integration Service
+        adapter = integration_service._get_adapter(integration.get("provider"))
+        canonical_event = {
+            "event_id": str(uuid.uuid4()) if 'uuid' in globals() else execution_id,
+            "organization_id": org_id,
+            "event_type": "SOAR_REMEDIATION",
+            "timestamp": str(datetime.now(timezone.utc)),
+            "severity": "HIGH",
+            "metadata": {
+                "execution_id": execution_id,
+                "response_decision_id": decision_id,
+                "action": action,
+                "playbook_id": playbook_id
+            }
+        }
+        
+        # Simulate transient error if specifically requested in configuration URL
+        url = integration.get("config", {}).get("url", "")
+        if "timeout-trigger.com" in url:
+            raise socket.timeout("Connection timed out (simulated).")
+        elif "unavailable-trigger.com" in url:
+            raise ConnectionError("Upstream connection refused (simulated).")
+        
+        # Dispatch mocked alert containment
+        res_payload = await adapter.send_alert(integration.get("config", {}), canonical_event)
+        
+        # 7. Update status to SUCCESS
+        completed_at = datetime.now(timezone.utc)
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        result_ref = res_payload.get("ticket_id") or res_payload.get("status") or "Mock delivered alert output reference"
+        
+        await soar_execution_service.transition_status(
+            organization_id=org_id,
+            execution_id=execution_id,
+            to_status="SUCCESS",
+            duration_ms=duration_ms,
+            connector_reference=integration.get("provider"),
+            result_reference=result_ref
+        )
+
+        # Publish GRC evidence details (E7 GRC Integration)
+        await db["grc_evidence"].insert_one({
+            "organization_id": org_id,
+            "control_id": "CTRL-SOAR-INTEGRITY",
+            "control_name": "SOAR Authorization and Automated Remediation Integrity Evidence",
+            "verdict": "COMPLIANT",
+            "assessed_by": "system_soar_execution",
+            "assessed_at": completed_at,
+            "details": {
+                "execution_id": execution_id,
+                "response_decision_id": decision_id,
+                "action": action,
+                "playbook_id": playbook_id,
+                "result": result_ref,
+                "approved_by": exec_doc.get("approved_by")
+            },
+            "soft_delete": False
+        })
+
+        return {"status": "SUCCESS", "execution_id": execution_id}
+
+    except Exception as e:
+        from datetime import timedelta
+        completed_at = datetime.now(timezone.utc)
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        error_msg = str(e)
+        logger.error(f"SOAR execution Celery task failed: {error_msg}")
+        
+        # Classify failure: transient vs permanent
+        is_timeout = "timeout" in error_msg.lower() or "timed out" in error_msg.lower()
+        is_conn_err = "refused" in error_msg.lower() or "getaddrinfo" in error_msg.lower() or "connection" in error_msg.lower()
+        is_transient = is_timeout or is_conn_err
+        
+        error_code = "CONNECTOR_TIMEOUT" if is_timeout else ("CONNECTOR_UNAVAILABLE" if is_conn_err else "EXTERNAL_API_FAILURE")
+
+        # Increment attempt count
+        attempt_count = exec_doc.get("attempt_count", 0) + 1
+        max_attempts = exec_doc.get("max_attempts", 3)
+        
+        await db["soar_execution_requests"].update_one(
+            {"execution_id": execution_id},
+            {"$set": {"attempt_count": attempt_count}}
+        )
+
+        # Transition RUNNING -> FAILED
+        await soar_execution_service.transition_status(
+            organization_id=org_id,
+            execution_id=execution_id,
+            to_status="FAILED",
+            error_code=error_code,
+            error_message=error_msg,
+            duration_ms=duration_ms,
+            connector_reference=integration.get("provider") if 'integration' in locals() else None,
+            is_retryable=is_transient and attempt_count < max_attempts
+        )
+
+        if is_transient and attempt_count < max_attempts:
+            # Transition FAILED -> RETRYING
+            retry_delay = 5 * attempt_count
+            next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=retry_delay)
+            
+            await soar_execution_service.transition_status(
+                organization_id=org_id,
+                execution_id=execution_id,
+                to_status="RETRYING",
+                error_code=error_code,
+                error_message=error_msg,
+                is_retryable=True,
+                retry_reason="TRANSIENT_CONNECTOR_ERROR",
+                next_retry_at=next_retry_at
+            )
+            
+            # Queue Celery task delay
+            soar_execution_task.apply_async(args=[execution_id], countdown=retry_delay)
+            return {"status": "RETRYING", "attempt": attempt_count, "next_retry_in": retry_delay}
+        else:
+            # Transition FAILED -> EXHAUSTED
+            await soar_execution_service.transition_status(
+                organization_id=org_id,
+                execution_id=execution_id,
+                to_status="EXHAUSTED",
+                error_code=error_code,
+                error_message=f"Execution permanently failed: {error_msg}",
+                is_retryable=False
+            )
+            return {"status": "FAILED", "error": error_msg}
+
+@celery_app.task(name="tasks.soar_execution_task")
+def soar_execution_task(execution_id: str) -> dict:
+    """Synchronous Celery task wrapping the async SOAR execution handler."""
+    return run_async(_soar_execution_async(execution_id))
+
+
+
+
 
 

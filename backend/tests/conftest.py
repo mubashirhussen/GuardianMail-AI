@@ -13,43 +13,53 @@ class MockCollection:
         self.name = name
         self.docs = {}
 
-    async def find_one(self, query, *args, **kwargs):
-        for doc in self.docs.values():
-            match = True
-            for k, v in query.items():
-                if k == "_id" and not isinstance(v, dict):
-                    if str(doc.get("_id")) != str(v):
-                        match = False
-                elif isinstance(v, dict) and "$ne" in v:
-                    val = doc.get(k)
+    def _match_query(self, doc, query):
+        if not query:
+            return True
+        for k, v in query.items():
+            if k == "_id" and not isinstance(v, dict):
+                if str(doc.get("_id")) != str(v):
+                    return False
+            elif k == "$or":
+                or_match = False
+                for sub_query in v:
+                    if self._match_query(doc, sub_query):
+                        or_match = True
+                        break
+                if not or_match:
+                    return False
+            elif isinstance(v, dict):
+                val = doc.get(k)
+                if "$ne" in v:
                     if str(val) == str(v["$ne"]):
-                        match = False
-                elif k == "$or":
-                    or_match = False
-                    for sub_query in v:
-                        sub_match = True
-                        for sk, sv in sub_query.items():
-                            if doc.get(sk) != sv:
-                                sub_match = False
-                                break
-                        if sub_match:
-                            or_match = True
-                            break
-                    if not or_match:
-                        match = False
-                elif k == "$in" or (isinstance(v, dict) and "$in" in v):
-                    allowed = v["$in"] if isinstance(v, dict) else v
-                    val = doc.get(k)
+                        return False
+                if "$in" in v:
+                    allowed = v["$in"]
                     if isinstance(val, list):
                         if not any(item in allowed for item in val):
-                            match = False
+                            return False
                     elif val not in allowed:
-                        match = False
-                elif doc.get(k) != v:
-                    match = False
-            if match:
-                c = doc.copy()
-                return c
+                        return False
+                if "$lt" in v:
+                    if val is None or val >= v["$lt"]:
+                        return False
+                if "$gt" in v:
+                    if val is None or val <= v["$gt"]:
+                        return False
+                if "$regex" in v:
+                    import re
+                    pattern = v["$regex"]
+                    flags = re.IGNORECASE if "i" in v.get("$options", "") else 0
+                    if not re.search(pattern, str(val or ""), flags):
+                        return False
+            elif doc.get(k) != v:
+                return False
+        return True
+
+    async def find_one(self, query, *args, **kwargs):
+        for doc in self.docs.values():
+            if self._match_query(doc, query):
+                return doc.copy()
         return None
 
     async def insert_one(self, doc, *args, **kwargs):
@@ -98,44 +108,7 @@ class MockCollection:
             query = {}
         matching = []
         for doc in self.docs.values():
-            match = True
-            for k, v in query.items():
-                if k == "_id" and not isinstance(v, dict):
-                    if str(doc.get("_id")) != str(v):
-                        match = False
-                elif k == "$or":
-                    or_match = False
-                    for sub_query in v:
-                        sub_match = True
-                        for sk, sv in sub_query.items():
-                            if doc.get(sk) != sv:
-                                sub_match = False
-                                break
-                        if sub_match:
-                            or_match = True
-                            break
-                    if not or_match:
-                        match = False
-                elif isinstance(v, dict) and "$ne" in v:
-                    if str(doc.get(k)) == str(v["$ne"]):
-                        match = False
-                elif isinstance(v, dict) and "$in" in v:
-                    val = doc.get(k)
-                    allowed = v["$in"]
-                    if isinstance(val, list):
-                        if not any(item in allowed for item in val):
-                            match = False
-                    elif val not in allowed:
-                        match = False
-                elif isinstance(v, dict) and "$regex" in v:
-                    import re
-                    pattern = v["$regex"]
-                    flags = re.IGNORECASE if "i" in v.get("$options", "") else 0
-                    if not re.search(pattern, str(doc.get(k, "")), flags):
-                        match = False
-                elif doc.get(k) != v:
-                    match = False
-            if match:
+            if self._match_query(doc, query):
                 matching.append(doc.copy())
 
         class MockCursor:

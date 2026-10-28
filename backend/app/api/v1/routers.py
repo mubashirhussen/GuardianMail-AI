@@ -2,7 +2,8 @@ from fastapi import APIRouter
 from app.api.routers import health
 from app.api.v1.endpoints import (
     auth, gmail, emails, parser, threats, intelligence, attachments,
-    devices, soc, complaints, reports, exposure, domain, incidents, dashboard, feedback, sso, policies, threat_intelligence, copilot, grc, integrations, data_platform, detections
+    devices, soc, complaints, reports, exposure, domain, incidents, dashboard, feedback, sso, policies, threat_intelligence, copilot, grc, integrations, data_platform, detections, threat_hunting, campaigns_api,
+    response_intelligence, soar_execution, response_operations, response_policies, response_analytics, response_optimization, metrics
 )
 from app.services.observability import SystemObservabilityService
 from fastapi import Response
@@ -37,6 +38,15 @@ v1_router.include_router(domain.router, prefix="/threat-intel", tags=["Domain In
 v1_router.include_router(incidents.router, prefix="/incidents", tags=["Incident Response Engine"])
 v1_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard & Analytics Platform"])
 v1_router.include_router(feedback.router, prefix="/feedback", tags=["Real User Testing Feedback"])
+v1_router.include_router(threat_hunting.router, prefix="/threat-hunting", tags=["Threat Hunting"])
+v1_router.include_router(campaigns_api.router, prefix="/campaigns", tags=["Attack Graph & Campaigns"])
+v1_router.include_router(response_intelligence.router, prefix="", tags=["Response Intelligence"])
+v1_router.include_router(soar_execution.router, prefix="", tags=["SOAR Execution"])
+v1_router.include_router(response_operations.router, prefix="", tags=["Response Operations"])
+v1_router.include_router(response_policies.router, prefix="", tags=["Response Policies"])
+v1_router.include_router(response_analytics.router, prefix="", tags=["Response Analytics"])
+v1_router.include_router(response_optimization.router, prefix="", tags=["Response Optimization"])
+v1_router.include_router(metrics.router, prefix="/response-intelligence", tags=["Response Observability"])
 
 @v1_router.get("/metrics", response_class=Response, tags=["Observability"])
 async def get_prometheus_metrics():

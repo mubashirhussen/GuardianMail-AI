@@ -76,16 +76,19 @@ async def create_ioc(
 ):
     """Ingest a new threat indicator, running scoring and enrichment."""
     # Organization scope is bound to the active tenant context
-    ioc = await threat_correlation_service.ingest_indicator(
-        indicator_type=payload.indicator_type,
-        indicator_value=payload.indicator_value,
-        source=payload.source,
-        organization_id=context.organization_id,
-        tags=payload.tags,
-        description=payload.description,
-        expires_in_days=payload.expires_in_days
-    )
-    return ioc
+    try:
+        ioc = await threat_correlation_service.ingest_indicator(
+            indicator_type=payload.indicator_type,
+            indicator_value=payload.indicator_value,
+            source=payload.source,
+            organization_id=context.organization_id,
+            tags=payload.tags,
+            description=payload.description,
+            expires_in_days=payload.expires_in_days
+        )
+        return ioc
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/threat-intelligence/iocs/{id}", response_model=Dict[str, Any])
 async def get_ioc(

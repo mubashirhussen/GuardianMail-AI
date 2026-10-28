@@ -112,58 +112,9 @@ class DetectionService:
         return docs
 
     async def generate_attack_graph(self, org_id: str, investigation_id: str) -> Dict[str, Any]:
-        """Construct interactive node-link relationships filtered strictly by organization tenant scope."""
-        inv = await self.investigation_repo.get_by_org_and_id(org_id, investigation_id)
-        if not inv:
-            raise ValueError("Investigation case not found")
-        
-        nodes = []
-        edges = []
-        
-        # Ground node: the investigation case itself
-        nodes.append({"id": f"INV-{investigation_id}", "label": inv.get("title"), "type": "INCIDENT", "color": "#ef4444"})
-
-        # Traverse entities
-        for entity in inv.get("entities", []):
-            ent_type = entity.get("type", "USER")
-            ent_val = entity.get("value", "")
-            node_id = f"{ent_type}-{ent_val}"
-            
-            # Nodes mapping
-            nodes.append({
-                "id": node_id,
-                "label": ent_val,
-                "type": ent_type,
-                "color": "#38bdf8" if ent_type == "USER" else "#fb7185"
-            })
-            
-            # Edges mapping
-            edges.append({
-                "source": f"INV-{investigation_id}",
-                "target": node_id,
-                "type": "RELATED_TO",
-                "label": "Observed In"
-            })
-
-        # Add mock campaign relation if exists
-        campaigns = await self.campaign_repo.get_by_org(org_id)
-        for camp in campaigns:
-            # If campaign contains any of the indicators, link it
-            if any(any(ind in str(ent.get("value")) for ent in inv.get("entities", [])) for ind in camp.get("indicators", [])):
-                nodes.append({
-                    "id": f"CAMP-{camp['campaign_id']}",
-                    "label": camp.get("name"),
-                    "type": "CAMPAIGN",
-                    "color": "#a855f7"
-                })
-                edges.append({
-                    "source": f"INV-{investigation_id}",
-                    "target": f"CAMP-{camp['campaign_id']}",
-                    "type": "PART_OF",
-                    "label": "Attributed Campaign"
-                })
-
-        return {"nodes": nodes, "edges": edges}
+        """Construct interactive node-link relationships using the rich E11.6 AttackGraphService."""
+        from app.services.attack_graph_service import attack_graph_service
+        return await attack_graph_service.build_graph_for_investigation(org_id, investigation_id)
 
     async def generate_ai_investigation_summary(self, org_id: str, investigation_id: str) -> Dict[str, Any]:
         """AI summary grounding citing observed facts vs model inferences separately (E5 Grounding)."""
