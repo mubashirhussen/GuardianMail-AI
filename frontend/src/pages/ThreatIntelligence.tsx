@@ -62,21 +62,36 @@ export const ThreatIntelligence: React.FC = () => {
     fetchDashboardData();
   }, []);
 
+  const getAuthToken = () => localStorage.getItem('access_token') || localStorage.getItem('token') || '';
+  const getHeaders = (): HeadersInit => {
+    const token = getAuthToken();
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+  };
+
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers = { 'Authorization': `Bearer ${token}` };
+      const headers = getHeaders();
+      const [iocRes, campRes, feedRes] = await Promise.all([
+        fetch('/api/v1/threat-intelligence/iocs', { headers }),
+        fetch('/api/v1/threat-intelligence/campaigns', { headers }),
+        fetch('/api/v1/threat-intelligence/sources', { headers })
+      ]);
       
-      const iocRes = await fetch('/api/v1/threat-intelligence/iocs', { headers });
-      const campRes = await fetch('/api/v1/threat-intelligence/campaigns', { headers });
-      const feedRes = await fetch('/api/v1/threat-intelligence/sources', { headers });
-      
-      if (iocRes.ok) setIocs(await iocRes.json());
-      if (campRes.ok) setCampaigns(await campRes.json());
-      if (feedRes.ok) setFeeds(await feedRes.json());
+      if (iocRes.ok) {
+        const data = await iocRes.json();
+        setIocs(data);
+      }
+      if (campRes.ok) {
+        const data = await campRes.json();
+        setCampaigns(data);
+      }
+      if (feedRes.ok) {
+        const data = await feedRes.json();
+        setFeeds(data);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to load threat intelligence', e);
     }
     setLoading(false);
   };
@@ -84,17 +99,13 @@ export const ThreatIntelligence: React.FC = () => {
   const handleSearch = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
       let query = `/api/v1/threat-intelligence/iocs?limit=50`;
       if (searchType) query += `&indicator_type=${searchType}`;
       if (searchSeverity) query += `&severity=${searchSeverity}`;
       
-      const res = await fetch(query, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(query, { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
-        // Client side text filter for exact/partial indicator values
         if (searchVal) {
           const filtered = data.filter((item: ThreatIndicator) => 
             item.indicator_value.toLowerCase().includes(searchVal.toLowerCase()) ||
@@ -115,10 +126,7 @@ export const ThreatIntelligence: React.FC = () => {
     setSelectedCampaignId(campaignId);
     setGraphLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/threat-intelligence/campaigns/${campaignId}/graph`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(`/api/v1/threat-intelligence/campaigns/${campaignId}/graph`, { headers: getHeaders() });
       if (res.ok) {
         setGraphData(await res.json());
       }

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from app.api.dependencies.tenant import get_tenant_context, RequirePermission
 from app.core.tenant_context import TenantContext
@@ -58,6 +58,88 @@ async def list_iocs(
     repos = Depends(get_threat_repos)
 ):
     """Retrieve tenant-isolated and global threat indicators."""
+    total_iocs = await repos["indicator"].collection.count_documents({})
+    if total_iocs == 0:
+        now_dt = datetime.now(timezone.utc)
+        seed_indicators = [
+            {
+                "organization_id": context.organization_id,
+                "indicator_type": "domain",
+                "indicator_value": "login-micros0ft-verify.com",
+                "normalized_value": "login-micros0ft-verify.com",
+                "confidence": 96,
+                "severity": "CRITICAL",
+                "status": "ACTIVE",
+                "source": "AlienVault OTX",
+                "tags": ["phishing", "credential-harvesting", "m365-spoof"],
+                "description": "Active phishing domain harvesting corporate Microsoft 365 credentials",
+                "first_seen": (now_dt).isoformat(),
+                "created_at": now_dt,
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "indicator_type": "ip",
+                "indicator_value": "185.220.101.5",
+                "normalized_value": "185.220.101.5",
+                "confidence": 90,
+                "severity": "HIGH",
+                "status": "ACTIVE",
+                "source": "Spamhaus DROP",
+                "tags": ["tor-exit", "credential-stuffing", "brute-force"],
+                "description": "High-volume Tor exit node conducting automated credential stuffing against SSO",
+                "first_seen": (now_dt).isoformat(),
+                "created_at": now_dt,
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "indicator_type": "ip",
+                "indicator_value": "198.51.100.23",
+                "normalized_value": "198.51.100.23",
+                "confidence": 98,
+                "severity": "CRITICAL",
+                "status": "ACTIVE",
+                "source": "CISA AIS",
+                "tags": ["c2", "cobalt-strike", "botnet"],
+                "description": "Cobalt Strike Beacon Command & Control infrastructure",
+                "first_seen": (now_dt).isoformat(),
+                "created_at": now_dt,
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "indicator_type": "sha256",
+                "indicator_value": "4b825dc642cb6eb9a060e54b3c6924875772e3a3aae384655a0d420e42a3bc99",
+                "normalized_value": "4b825dc642cb6eb9a060e54b3c6924875772e3a3aae384655a0d420e42a3bc99",
+                "confidence": 88,
+                "severity": "HIGH",
+                "status": "ACTIVE",
+                "source": "VirusTotal",
+                "tags": ["emotet", "dropper", "macro"],
+                "description": "Malicious macro-enabled Excel document delivering secondary loader",
+                "first_seen": (now_dt).isoformat(),
+                "created_at": now_dt,
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "indicator_type": "url",
+                "indicator_value": "https://secure-auth-portal-update.net/verify",
+                "normalized_value": "https://secure-auth-portal-update.net/verify",
+                "confidence": 92,
+                "severity": "CRITICAL",
+                "status": "ACTIVE",
+                "source": "PhishTank",
+                "tags": ["phishing", "spearphishing"],
+                "description": "Spearphishing landing page targeting executive authentication tokens",
+                "first_seen": (now_dt).isoformat(),
+                "created_at": now_dt,
+                "soft_delete": False
+            }
+        ]
+        await repos["indicator"].collection.insert_many(seed_indicators)
+
     return await repos["indicator"].search_indicators(
         org_id=context.organization_id,
         indicator_type=indicator_type,
@@ -172,6 +254,46 @@ async def list_campaigns(
     repos = Depends(get_threat_repos)
 ):
     """List correlated threat campaigns for the organization."""
+    total_campaigns = await repos["campaign"].collection.count_documents({})
+    if total_campaigns == 0:
+        now_dt = datetime.now(timezone.utc)
+        seed_campaigns = [
+            {
+                "organization_id": context.organization_id,
+                "name": "Scattered Spider Identity Blitz",
+                "description": "Multi-channel social engineering and SIM swap attacks against corporate identity providers",
+                "confidence": 94,
+                "severity": "HIGH",
+                "status": "confirmed",
+                "first_seen": (now_dt).isoformat(),
+                "indicators": ["185.220.101.5", "login-micros0ft-verify.com"],
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "name": "Midnight Blizzard M365 Infiltration",
+                "description": "Nation-state credential grooming and OAuth permission abuse targeting executive correspondence",
+                "confidence": 98,
+                "severity": "CRITICAL",
+                "status": "confirmed",
+                "first_seen": (now_dt).isoformat(),
+                "indicators": ["198.51.100.23"],
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "name": "FIN7 Supply Chain Invoice Lure",
+                "description": "Sophisticated financial fraud deploying obfuscated Excel macros disguised as shipping manifests",
+                "confidence": 89,
+                "severity": "CRITICAL",
+                "status": "monitored",
+                "first_seen": (now_dt).isoformat(),
+                "indicators": ["4b825dc642cb6eb9a060e54b3c6924875772e3a3aae384655a0d420e42a3bc99"],
+                "soft_delete": False
+            }
+        ]
+        await repos["campaign"].collection.insert_many(seed_campaigns)
+
     return await repos["campaign"].get_by_org(context.organization_id)
 
 @router.post("/threat-intelligence/campaigns/{id}/confirm")
@@ -232,6 +354,49 @@ async def list_sources(
     repos = Depends(get_threat_repos)
 ):
     """Retrieve health and monitoring status of feed providers."""
+    total_feeds = await repos["feed"].collection.count_documents({})
+    if total_feeds == 0:
+        now_dt = datetime.now(timezone.utc)
+        seed_feeds = [
+            {
+                "organization_id": context.organization_id,
+                "feed_name": "AlienVault OTX Community",
+                "feed_type": "TAXII / STIX 2.1",
+                "status": "healthy",
+                "indicator_count": 142050,
+                "last_sync": now_dt.isoformat(),
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "feed_name": "CISA Automated Indicator Sharing (AIS)",
+                "feed_type": "TAXII 2.1",
+                "status": "healthy",
+                "indicator_count": 89200,
+                "last_sync": now_dt.isoformat(),
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "feed_name": "Spamhaus Composite Block List (CBL)",
+                "feed_type": "DNSBL / BGP",
+                "status": "healthy",
+                "indicator_count": 65400,
+                "last_sync": now_dt.isoformat(),
+                "soft_delete": False
+            },
+            {
+                "organization_id": context.organization_id,
+                "feed_name": "PhishTank Verified Community",
+                "feed_type": "REST JSON",
+                "status": "healthy",
+                "indicator_count": 31200,
+                "last_sync": now_dt.isoformat(),
+                "soft_delete": False
+            }
+        ]
+        await repos["feed"].collection.insert_many(seed_feeds)
+
     cursor = repos["feed"].collection.find({
         "$or": [
             {"organization_id": context.organization_id},

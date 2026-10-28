@@ -61,6 +61,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (payload: any) => {
     const tokens = await authService.login(payload);
     localStorage.setItem('access_token', tokens.access_token);
+    localStorage.setItem('token', tokens.access_token);
     localStorage.setItem('refresh_token', tokens.refresh_token);
     await refreshUser();
   };
@@ -68,6 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async (credential: string) => {
     const response = await authService.verifyGoogleToken(credential);
     localStorage.setItem('access_token', response.access_token);
+    localStorage.setItem('token', response.access_token);
     localStorage.setItem('refresh_token', response.refresh_token);
     if (response.user) {
       setUser(response.user);
@@ -83,11 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     await authService.logout();
+    localStorage.removeItem('token');
     setUser(null);
   };
 
   const logoutAll = async () => {
     await authService.logoutAll();
+    localStorage.removeItem('token');
     setUser(null);
   };
 

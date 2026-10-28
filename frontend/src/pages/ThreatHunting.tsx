@@ -38,18 +38,19 @@ export const ThreatHunting: React.FC = () => {
   const [sessionDesc, setSessionDesc] = useState('');
   const [saveSessionOpen, setSaveSessionOpen] = useState(false);
 
-  const token = localStorage.getItem('token');
-  const config = {
-    headers: { Authorization: `Bearer ${token}` }
+  const getConfig = () => {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token') || '';
+    return token ? { headers: { Authorization: `Bearer ${token}` } } : {};
   };
 
   useEffect(() => {
     fetchSessions();
+    executeHuntSearch();
   }, []);
 
   const fetchSessions = async () => {
     try {
-      const res = await axios.get('/api/v1/threat-hunting/sessions', config);
+      const res = await axios.get('/api/v1/threat-hunting/sessions', getConfig());
       setSessions(res.data);
     } catch (err) {
       console.error('Failed to fetch hunt sessions', err);
@@ -94,7 +95,7 @@ export const ThreatHunting: React.FC = () => {
         query_ast,
         enrich_intel: enrichIntel,
         enrich_ueba: enrichUeba
-      }, config);
+      }, getConfig());
       setResults(res.data);
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message || 'Threat hunting query execution failed');
@@ -122,7 +123,7 @@ export const ThreatHunting: React.FC = () => {
         name: sessionName,
         description: sessionDesc,
         query_ast
-      }, config);
+      }, getConfig());
 
       setSessionName('');
       setSessionDesc('');
@@ -161,7 +162,7 @@ export const ThreatHunting: React.FC = () => {
         event_id: selectedEvent.event_id,
         severity: escalateSeverity,
         notes: escalateNotes
-      }, config);
+      }, getConfig());
 
       // Update selected event locally with the link to incident ID
       setSelectedEvent({

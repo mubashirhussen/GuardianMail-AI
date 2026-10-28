@@ -122,7 +122,7 @@ export const AttachmentScanner: React.FC = () => {
             {isDragActive ? 'Drop to scan...' : 'Drop files here or click to browse'}
           </span>
           <span className="text-xs text-slate-500 mt-1 block">
-            PDF, DOC, DOCX, XLS, XLSX, PPT, ZIP, RAR, EXE, etc. — Max 10MB per file
+            All formats accepted: Images (PNG, JPG, SVG, WebP), Documents (PDF, Word, Excel, PPT), Emails (EML, MSG), Code, Archives &amp; Binaries — Max 10MB
           </span>
         </div>
       </div>

@@ -287,7 +287,15 @@ class AttachmentAnalyzerService:
                 content_type = guessed
 
         # 2. File Structural Hazard Checks & Parsers
-        is_double_ext = len(filename.split(".")) > 2
+        # Double extension masquerade threat (e.g. document.pdf.exe, invoice.docx.vbs)
+        fn_parts = filename.lower().split(".")
+        dangerous_final_exts = {"exe", "vbs", "bat", "cmd", "scr", "ps1", "pif", "hta", "wsf", "jar", "apk"}
+        innocent_fake_exts = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "jpg", "jpeg", "png", "gif", "zip"}
+        is_double_ext = (
+            len(fn_parts) > 2 
+            and fn_parts[-1] in dangerous_final_exts 
+            and (fn_parts[-2] in innocent_fake_exts or fn_parts[-2] in dangerous_final_exts)
+        )
         is_password_protected = False
         has_macros = False
         has_embedded_objects = False
@@ -429,8 +437,40 @@ class AttachmentAnalyzerService:
             except Exception as e:
                 logger.debug(f"PPTX parsing failed: {e}")
 
-        # Plain Text files
-        elif ext in [".txt", ".csv"]:
+        # Email Message Files (.eml, .msg)
+        elif ext in [".eml", ".msg"]:
+            try:
+                import email
+                from email import policy
+                msg = email.message_from_bytes(attachment_bytes, policy=policy.default)
+                subject = str(msg.get("Subject", "") or "")
+                from_addr = str(msg.get("From", "") or "")
+                to_addr = str(msg.get("To", "") or "")
+                date_str = str(msg.get("Date", "") or "")
+                
+                embedded_metadata["subject"] = subject
+                embedded_metadata["from"] = from_addr
+                embedded_metadata["to"] = to_addr
+                if date_str:
+                    creation_metadata["timestamp"] = date_str
+                    
+                body_parts = []
+                for part in msg.walk():
+                    content_type_part = part.get_content_type()
+                    if content_type_part in ["text/plain", "text/html"]:
+                        try:
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                body_parts.append(payload.decode("utf-8", errors="ignore"))
+                        except Exception:
+                            pass
+                extracted_text = f"Subject: {subject}\nFrom: {from_addr}\nTo: {to_addr}\n\n" + "\n".join(body_parts)
+            except Exception as e:
+                logger.debug(f"EML parsing fallback: {e}")
+                extracted_text = attachment_bytes.decode("utf-8", errors="ignore")
+
+        # Plain Text, Markup & Code files
+        elif ext in [".txt", ".csv", ".json", ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".py", ".js", ".ts", ".md", ".rtf", ".sql"]:
             try:
                 extracted_text = attachment_bytes.decode("utf-8", errors="ignore")
             except Exception as e:
@@ -556,12 +596,16 @@ class AttachmentAnalyzerService:
 
         # 4. Formulate Document Classification
         doc_category = "DOCUMENT"
-        if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+        if ext in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg", ".tiff", ".ico"]:
             doc_category = "IMAGE"
-        elif ext in [".zip", ".rar", ".7z"]:
+        elif ext in [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"]:
             doc_category = "ARCHIVE"
         elif ext == ".pdf":
             doc_category = "PDF"
+        elif ext in [".eml", ".msg"]:
+            doc_category = "EMAIL"
+        elif ext in [".exe", ".dll", ".bin", ".iso", ".bat", ".cmd", ".vbs", ".ps1", ".scr"]:
+            doc_category = "EXECUTABLE"
         else:
             doc_category = AttachmentAnalyzerService.classify_document(extracted_text)
 

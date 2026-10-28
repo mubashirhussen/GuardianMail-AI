@@ -32,7 +32,7 @@ const processQueue = (error: any, token: string | null = null) => {
 // Request interceptor: inject token automatically
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }

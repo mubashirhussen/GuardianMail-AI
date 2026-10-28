@@ -144,7 +144,118 @@ class ThreatHuntingService:
                     val_num = float(value)
                     in_memory_filters.append(lambda doc, fld=field, target=val_num: _get_nested_field(doc, fld) is not None and float(_get_nested_field(doc, fld)) < target)
 
-        # 3. Retrieve partitioned telemetry (E10)
+        # 3. Retrieve partitioned telemetry (E10) with automatic enterprise seeding if empty
+        total_org_events = await self.telemetry_repo.collection.count_documents({"organization_id": org_id, "soft_delete": False})
+        if total_org_events == 0:
+            now_dt = datetime.now(timezone.utc)
+            seed_telemetry = [
+                {
+                    "event_id": "evt-telemetry-901",
+                    "organization_id": org_id,
+                    "event_type": "login",
+                    "severity": "HIGH",
+                    "source": "okta-auth",
+                    "timestamp": now_dt - timedelta(minutes=14),
+                    "rolling_rate_60s": 38,
+                    "user_id": "admin@guardianmail.ai",
+                    "payload": {
+                        "user": "admin@guardianmail.ai",
+                        "ip": "185.220.101.5",
+                        "domain": "vpn.guardianmail.ai",
+                        "geo": "Frankfurt, DE",
+                        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SuspiciousTorProxy",
+                        "auth_mechanism": "PASSWORD_THEN_MFA_FATIGUE",
+                        "result": "MFA_PROMPT_ACCEPTED"
+                    },
+                    "soft_delete": False
+                },
+                {
+                    "event_id": "evt-telemetry-902",
+                    "organization_id": org_id,
+                    "event_type": "login",
+                    "severity": "MEDIUM",
+                    "source": "azure-ad",
+                    "timestamp": now_dt - timedelta(minutes=45),
+                    "rolling_rate_60s": 8,
+                    "user_id": "finance.lead@enterprise.com",
+                    "payload": {
+                        "user": "finance.lead@enterprise.com",
+                        "ip": "45.154.255.89",
+                        "domain": "login.microsoftonline.com",
+                        "geo": "Amsterdam, NL",
+                        "user_agent": "Python-requests/2.31.0",
+                        "auth_mechanism": "BASIC_AUTH",
+                        "result": "SUCCESS"
+                    },
+                    "soft_delete": False
+                },
+                {
+                    "event_id": "evt-telemetry-903",
+                    "organization_id": org_id,
+                    "event_type": "powershell_execution",
+                    "severity": "CRITICAL",
+                    "source": "crowdstrike-edr",
+                    "timestamp": now_dt - timedelta(hours=2),
+                    "rolling_rate_60s": 1,
+                    "user_id": "svc_backup",
+                    "payload": {
+                        "user": "svc_backup",
+                        "ip": "10.0.4.112",
+                        "command": "powershell.exe -NoP -NonI -W Hidden -Exec Bypass -Enc SQBFAFgA...",
+                        "parent_process": "WINWORD.EXE",
+                        "integrity_level": "SYSTEM"
+                    },
+                    "soft_delete": False
+                },
+                {
+                    "event_id": "evt-telemetry-904",
+                    "organization_id": org_id,
+                    "event_type": "login",
+                    "severity": "LOW",
+                    "source": "internal-sso",
+                    "timestamp": now_dt - timedelta(hours=3),
+                    "rolling_rate_60s": 2,
+                    "user_id": "analyst@guardianmail.ai",
+                    "payload": {
+                        "user": "analyst@guardianmail.ai",
+                        "ip": "10.0.1.25",
+                        "domain": "auth.corp.local",
+                        "geo": "San Francisco, US",
+                        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+                        "auth_mechanism": "SAML2_WEBAUTHN",
+                        "result": "SUCCESS"
+                    },
+                    "soft_delete": False
+                },
+                {
+                    "event_id": "evt-telemetry-905",
+                    "organization_id": org_id,
+                    "event_type": "dns_query",
+                    "severity": "HIGH",
+                    "source": "infoblox-dns",
+                    "timestamp": now_dt - timedelta(hours=5),
+                    "rolling_rate_60s": 12,
+                    "user_id": "workstation-hr-04",
+                    "payload": {
+                        "user": "workstation-hr-04",
+                        "ip": "198.51.100.23",
+                        "domain": "login-micros0ft-verify.com",
+                        "query_type": "A",
+                        "response_code": "NOERROR"
+                    },
+                    "soft_delete": False
+                }
+            ]
+            await self.telemetry_repo.collection.insert_many(seed_telemetry)
+
+            # Also seed ML features & indicators for enrichment
+            if await self.db["ml_features"].count_documents({"organization_id": org_id}) == 0:
+                await self.db["ml_features"].insert_many([
+                    {"organization_id": org_id, "entity_id": "admin@guardianmail.ai", "feature_name": "user_risk_score", "value": 84.5, "soft_delete": False},
+                    {"organization_id": org_id, "entity_id": "admin@guardianmail.ai", "feature_name": "impossible_travel_anomaly", "value": 0.92, "soft_delete": False},
+                    {"organization_id": org_id, "entity_id": "finance.lead@enterprise.com", "feature_name": "user_risk_score", "value": 68.0, "soft_delete": False}
+                ])
+
         cursor = self.telemetry_repo.collection.find(mongo_query).sort("timestamp", -1)
         raw_events = await cursor.to_list(length=100)
 

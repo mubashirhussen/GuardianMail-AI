@@ -1,4 +1,5 @@
 from typing import Dict, Any, List
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from bson import ObjectId
 from app.api.dependencies.auth import get_current_active_user
@@ -11,50 +12,70 @@ import os
 import re
 
 ALLOWED_EXTENSIONS = {
-    "pdf", "docx", "xlsx", "pptx", "png", "jpg", "jpeg", "gif", "zip", "txt", "csv", "eml"
+    # Documents
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf",
+    # Images
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "svg", "ico",
+    # Text, Code & Data
+    "txt", "csv", "json", "xml", "html", "htm", "md", "log", "yaml", "yml", "sql", "py", "js", "ts",
+    # Archives & Compressed
+    "zip", "rar", "7z", "tar", "gz", "bz2",
+    # Emails & Communication
+    "eml", "msg",
+    # Executables & Binaries (Supported for malware analysis)
+    "exe", "dll", "bin", "iso", "apk", "jar", "bat", "cmd", "vbs", "ps1", "scr"
 }
 
 def sanitize_and_validate_filename(filename: str) -> str:
-    """Sanitize the uploaded file name to prevent path traversal and double extension attacks."""
+    """Sanitize the uploaded file name to prevent path traversal while accepting any file format."""
     if not filename:
-        raise HTTPException(status_code=400, detail="Filename is missing.")
+        return "unnamed_attachment.bin"
         
     # Prevent Path Traversal (e.g. ../../../etc/passwd)
     clean_base = os.path.basename(filename)
     
-    # Restrict to safe character-sets
-    sanitized = re.sub(r'[^a-zA-Z0-9._-]', '', clean_base)
-    
-    # Check for Double Extension Attacks (e.g. exploit.png.exe)
-    parts = sanitized.split('.')
-    if len(parts) > 2:
-        # Check all suffix extensions
-        for ext in parts[1:]:
-            if ext.lower() not in ALLOWED_EXTENSIONS:
-                 raise HTTPException(
-                     status_code=400, 
-                     detail=f"Double extension validation failed on suffix component '{ext}'."
-                 )
-                 
-    # Validate final extension component
-    ext = parts[-1].lower() if len(parts) > 1 else ""
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type extension: '.{ext}'."
-        )
+    # Restrict to safe character-sets while preserving spaces, dots, dashes
+    sanitized = re.sub(r'[^a-zA-Z0-9._\s-]', '', clean_base).strip()
+    if not sanitized:
+        sanitized = "attachment_file"
         
     return sanitized
 
 router = APIRouter()
 
+@router.get("/")
+async def list_user_attachments(
+    skip: int = 0,
+    limit: int = 50,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """List recent attachment scans for the authenticated user."""
+    if db_manager.db is None:
+        return []
+    cursor = db_manager.db["attachments"].find(
+        {"user_id": str(current_user.id)}
+    ).sort("created_at", -1).skip(skip).limit(limit)
+    docs = await cursor.to_list(length=limit)
+    results = []
+    for d in docs:
+        item = dict(d.get("analysis", {}))
+        item["id"] = str(d["_id"])
+        item["attachment_id"] = str(d["_id"])
+        item["filename"] = d.get("filename", item.get("filename", "unknown"))
+        item["file_size_bytes"] = d.get("file_size_bytes", item.get("file_size_bytes", 0))
+        item["verdict"] = d.get("verdict", item.get("verdict", "SAFE"))
+        item["risk_score"] = d.get("risk_score", item.get("risk_score", 0))
+        results.append(item)
+    return results
+
+@router.post("/scan")
 @router.post("/analyze")
 @trace_span(name="attachment_analyze")
 async def analyze_attachment_file(
     file: UploadFile = File(...),
     current_user: UserInDB = Depends(get_current_active_user)
 ):
-    """Ingest a file attachment, parse structures, and compute security risk indices."""
+    """Ingest any file attachment format, parse structures, and compute security risk indices."""
     sanitized_filename = sanitize_and_validate_filename(file.filename)
     if db_manager.db is None:
           raise RuntimeError("Database connection not ready.")
@@ -62,14 +83,50 @@ async def analyze_attachment_file(
     content = await file.read()
     analysis = await AttachmentAnalyzerService.analyze_attachment(content, sanitized_filename)
     
+    # Calculate risk score based on indicators
+    risk = analysis.get("risk_score", 0)
+    indicators = analysis.get("risk_indicators", [])
+    if risk == 0 and indicators:
+        risk = 15
+        for ind in indicators:
+            ind_lower = ind.lower()
+            if any(k in ind_lower for k in ["executable", "malware", "payload", "double extension", "high file entropy"]):
+                risk = max(risk, 85)
+            elif any(k in ind_lower for k in ["vba", "macro", "encrypted", "bomb", "credential", "brand"]):
+                risk = max(risk, 65)
+            elif any(k in ind_lower for k in ["qr", "link", "warning", "redirect"]):
+                risk = max(risk, 40)
+    elif risk == 0:
+        risk = 10
+
+    # Map verdict for UI
+    if risk >= 75 or analysis.get("malware_detected") or analysis.get("doc_category") in ["MALWARE", "EXECUTABLE"]:
+        verdict = "MALICIOUS"
+    elif risk >= 35 or analysis.get("is_double_ext") or len(indicators) > 0:
+        verdict = "SUSPICIOUS"
+    else:
+        verdict = "SAFE"
+
+    analysis["risk_score"] = risk
+    analysis["verdict"] = verdict
+    analysis["filename"] = sanitized_filename
+    analysis["file_size_bytes"] = len(content)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    analysis["scan_timestamp"] = now_iso
+    
     # Save the scanned attachment results record to MongoDB
     doc = {
         "user_id": str(current_user.id),
         "filename": sanitized_filename,
-        "analysis": analysis
+        "file_size_bytes": len(content),
+        "verdict": verdict,
+        "risk_score": risk,
+        "analysis": analysis,
+        "created_at": datetime.now(timezone.utc)
     }
     res = await db_manager.db["attachments"].insert_one(doc)
     analysis["id"] = str(res.inserted_id)
+    analysis["attachment_id"] = str(res.inserted_id)
     return analysis
 
 @router.post("/ocr")
