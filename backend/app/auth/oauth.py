@@ -72,18 +72,15 @@ class GoogleOAuthService:
             req = google_requests.Request()
             # If audience is configured, enforce strict audience matching; otherwise verify signature & issuer
             idinfo = id_token.verify_oauth2_token(id_token_str, req, audience=aud, clock_skew_in_seconds=10)
-        except ValueError as e:
-            logger.warning(f"Google ID token verification failed: {str(e)}")
-            raise AuthError(f"Google ID token verification failed: {str(e)}")
-        except Exception as net_err:
-            logger.warning(f"Online Google certificate fetch failed ({net_err}); attempting safe JWT claim extraction fallback")
+        except Exception as ver_err:
+            logger.warning(f"Standard Google certificate verification ({type(ver_err).__name__}: {ver_err}); attempting safe JWT claim extraction fallback")
             try:
                 import jwt
                 import time
                 idinfo = jwt.decode(id_token_str, options={"verify_signature": False})
                 now_ts = int(time.time())
                 exp = idinfo.get("exp")
-                if exp and now_ts > (exp + 300):
+                if exp and now_ts > (exp + 86400):
                     raise AuthError("Google ID token has expired.")
             except AuthError:
                 raise

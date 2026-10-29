@@ -25,10 +25,25 @@ class Settings(BaseSettings):
     # Security & JWT Tokens Configuration
     SECRET_KEY: str = "enterprise-default-super-secure-key-change-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours persistent active session
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_DURATION_SECONDS: int = 900  # 15 minutes
+    
+    # External Threat Intelligence & Security APIs
+    VIRUSTOTAL_API_KEY: Optional[str] = None
+    SAFE_BROWSING_API_KEY: Optional[str] = None
+    ABUSEIPDB_API_KEY: Optional[str] = None
+    URLSCAN_API_KEY: Optional[str] = None
+    PHISHTANK_API_KEY: Optional[str] = None
+    SHODAN_API_KEY: Optional[str] = None
+    
+    # AI & LLM Cognitive Analysis Engines
+    AI_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4-turbo"
     
     # Rate Limiting Configurations
     RATE_LIMIT_PER_MINUTE: int = 60

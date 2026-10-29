@@ -235,10 +235,21 @@ async def test_forgot_password_anti_enumeration_and_recovery_flow(client: AsyncC
     })
     assert old_login.status_code == 400
 
-    # 8. New password logs in successfully
+    # 8. New password initiates 2FA challenge and verifies successfully
     new_login = await client.post("/api/v1/auth/login", json={
         "email": user_email,
         "password": new_password
     })
     assert new_login.status_code == 200
-    assert "access_token" in new_login.json()
+    login_data = new_login.json()
+    assert login_data["status"] == "otp_required"
+    otp_code = login_data["code"]
+    challenge_id = login_data["challenge_id"]
+
+    verify_login = await client.post("/api/v1/auth/otp/verify", json={
+        "email": user_email,
+        "code": otp_code,
+        "challenge_id": challenge_id
+    })
+    assert verify_login.status_code == 200
+    assert "access_token" in verify_login.json()

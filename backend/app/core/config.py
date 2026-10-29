@@ -23,8 +23,8 @@ class Settings(BaseSettings):
         description="Secret key for JWT signing. MUST be changed in production"
     )
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     
     # === Session & Account Security ===
     MAX_LOGIN_ATTEMPTS: int = 5

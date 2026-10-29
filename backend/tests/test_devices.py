@@ -31,3 +31,4 @@ def test_evaluate_session_risk():
     assert evaluate_session_risk("203.0.113.45", is_trusted=True) == "LOW"
     assert evaluate_session_risk("203.0.113.45", is_trusted=False) == "MEDIUM"
     assert evaluate_session_risk("203.0.113.45", is_trusted=False, is_suspicious=True) == "HIGH"
+
