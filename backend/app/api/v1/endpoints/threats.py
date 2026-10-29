@@ -1,10 +1,12 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
 from app.api.dependencies.auth import get_current_active_user
 from app.models.user import UserInDB
 from app.repositories.email_repo import EmailRepository
 from app.database.connection import db_manager
 from app.services.threat_detector import ThreatDetectorService
+from app.services.advisories_service import ThreatAdvisoriesService, MAJOR_ADVISORIES
 
 router = APIRouter()
 
@@ -87,6 +89,101 @@ async def get_threat_evidence(
         "negative_evidence": analysis.get("negative_evidence", []),
         "detectors_run": analysis.get("detector_sources", [])
     }
+
+
+class CertInComplaintDraftRequest(BaseModel):
+    incident_type: str = "Phishing / Cyber Fraud"
+    suspect_details: str = "Unknown Sender"
+    incident_description: str = ""
+    financial_loss: Optional[float] = 0.0
+    transaction_id: Optional[str] = None
+    bank_name: Optional[str] = None
+    evidence_urls: Optional[List[str]] = None
+
+
+@router.get("/advisories")
+async def get_threat_advisories(
+    category: Optional[str] = Query(None, description="Filter by category e.g. Smishing, Malware, Extortion"),
+    severity: Optional[str] = Query(None, description="Filter by severity: CRITICAL, HIGH, MEDIUM"),
+    search: Optional[str] = Query(None, description="Search keyword in title or description")
+):
+    """
+    Retrieve real-world major cyber threat campaigns and advisories from recent days.
+    Provides customer awareness bulletins and protection defense measures.
+    """
+    advisories = ThreatAdvisoriesService.get_all_advisories(category=category, severity=severity, search=search)
+    return {
+        "status": "success",
+        "count": len(advisories),
+        "advisories": advisories
+    }
+
+
+@router.get("/advisories/{advisory_id}")
+async def get_single_advisory(advisory_id: str):
+    """Retrieve detailed threat dossier, modus operandi, and protection playbook for an advisory."""
+    advisory = ThreatAdvisoriesService.get_advisory_by_id(advisory_id)
+    if not advisory:
+        raise HTTPException(status_code=404, detail="Advisory bulletin not found.")
+    return {
+        "status": "success",
+        "advisory": advisory
+    }
+
+
+@router.post("/advisories/draft-complaint")
+async def draft_certin_complaint(
+    req: CertInComplaintDraftRequest,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """
+    Generate an official CERT-In and National Cyber Crime Portal (1930 / cybercrime.gov.in)
+    complaint draft bundling indicators, narrative, and user details.
+    """
+    from datetime import datetime, timezone
+    reporter_name = current_user.full_name or current_user.email.split("@")[0]
+    reporter_email = current_user.email
+    reporter_phone = getattr(current_user, "phone_number", None) or ""
+
+    complaint_body = ThreatAdvisoriesService.format_certin_complaint(
+        reporter_name=reporter_name,
+        reporter_email=reporter_email,
+        reporter_phone=reporter_phone,
+        incident_type=req.incident_type,
+        suspect_details=req.suspect_details,
+        incident_description=req.incident_description,
+        financial_loss=req.financial_loss,
+        transaction_id=req.transaction_id,
+        bank_name=req.bank_name,
+        evidence_urls=req.evidence_urls
+    )
+
+    # Log draft generation in database for customer reference if database ready
+    if db_manager.db is not None:
+        try:
+            await db_manager.db["complaint_drafts"].insert_one({
+                "user_id": str(current_user.id),
+                "incident_type": req.incident_type,
+                "suspect_details": req.suspect_details,
+                "financial_loss": req.financial_loss,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "body_content": complaint_body
+            })
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "message": "Official CERT-In complaint draft generated successfully.",
+        "draft_text": complaint_body,
+        "submission_portals": [
+            {"name": "National Cyber Crime Reporting Portal", "url": "https://cybercrime.gov.in", "helpline": "1930"},
+            {"name": "CERT-In Incident Helpdesk", "email": "incident@cert-in.org.in", "toll_free": "1800-11-4949"},
+            {"name": "Government Phishing Reporting", "email": "report@phishing.gov.in"},
+            {"name": "RBI Sachet Portal", "url": "https://sachet.rbi.org.in"}
+        ]
+    }
+
 
 @router.get("/{id}")
 async def get_threat_by_id(
@@ -196,6 +293,7 @@ async def get_url_investigation_by_id(
     doc.pop("_id", None)
     return doc
 
+
 @router.get("/url-investigations/{investigation_id}/evidence")
 async def get_url_investigation_evidence(
     investigation_id: str,
@@ -301,4 +399,5 @@ async def export_investigation_json(
         
     doc.pop("_id", None)
     return doc
+
 

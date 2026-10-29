@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   Search,
@@ -6,7 +7,8 @@ import {
   TrendingDown,
   TrendingUp,
   Clock,
-  Eye
+  Eye,
+  ShieldCheck
 } from 'lucide-react';
 import {
   AreaChart,
@@ -177,11 +179,20 @@ export const ThreatCenter: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12">
-      <div>
-        <h1 className="text-2xl font-bold text-white tracking-tight">Threat Center</h1>
-        <p className="text-xs text-slate-400 mt-1">
-          Monitor and investigate security threats across your organization.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Threat Center</h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Monitor and investigate security threats across your organization.
+          </p>
+        </div>
+        <Link
+          to="/cyber-defence"
+          className="px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold text-xs flex items-center gap-2 self-start sm:self-center transition"
+        >
+          <ShieldCheck className="h-4 w-4" />
+          <span>India CERT-In & Threat Advisories</span>
+        </Link>
       </div>
 
       {/* 4 KPI Cards */}

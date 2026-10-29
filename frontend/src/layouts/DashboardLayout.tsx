@@ -108,6 +108,7 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
         { name: 'Privacy Guardian', path: '/privacy', icon: Lock },
         { name: 'Investigations', path: '/investigations', icon: Search },
         { name: 'Threat Intelligence', path: '/threat-intelligence', icon: Sparkles },
+        { name: 'CERT-In & Advisories', path: '/cyber-defence', icon: ShieldCheck, badge: 'India' },
       ],
     },
     {

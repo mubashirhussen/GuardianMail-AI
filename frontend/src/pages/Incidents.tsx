@@ -4,9 +4,10 @@ import { incidentsService } from '../services/incidents';
 import { Link } from 'react-router-dom';
 import { 
   Search, Filter, 
-  ChevronRight, Calendar, AlertOctagon, Terminal
+  ChevronRight, Calendar, AlertOctagon, Terminal, Sparkles
 } from 'lucide-react';
 import { TableSkeleton } from '../components/Loader';
+import { CertInCyberDefense } from '../components/CertInCyberDefense';
 
 const SEVERITY_COLORS = {
   CRITICAL: 'text-red-500 bg-red-500/10 border-red-500/20',
@@ -175,6 +176,43 @@ export const Incidents: React.FC = () => {
               <p className="text-[10px] text-slate-550 max-w-[320px] mx-auto">No alert events matching search parameters exist in local databases.</p>
             </div>
           )}
+        </div>
+      </div>
+      {/* National Cyber Incident Reporting & CERT-In Desk */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-4 border-t border-slate-800">
+        <div className="lg:col-span-6 xl:col-span-5">
+          <CertInCyberDefense />
+        </div>
+        <div className="lg:col-span-6 xl:col-span-7 flex flex-col justify-between bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                Advisory Bulletin
+              </span>
+              <Link
+                to="/cyber-defence"
+                className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+              >
+                View All Advisories →
+              </Link>
+            </div>
+            <h3 className="text-base font-bold text-slate-100">
+              Need to Report a Major Cyber Scam or Financial Loss?
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              If an incident involves active financial fraud, immediately dial <strong>1930</strong> (National Cyber Crime Helpline).
+              You can also generate pre-formatted complaints with all incident IOCs, headers, and hashes ready for submission to CERT-In.
+            </p>
+          </div>
+          <div className="pt-4 flex flex-wrap items-center gap-3">
+            <Link
+              to="/cyber-defence"
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-2 transition"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>Explore Recent Threat Incidents & Defense Guides</span>
+            </Link>
+          </div>
         </div>
       </div>
     </div>

@@ -48,6 +48,7 @@ import { EmailScans } from './pages/EmailScans';
 import { EmailDetail } from './pages/EmailDetail';
 import { Incidents } from './pages/Incidents';
 import { IncidentDetail } from './pages/IncidentDetail';
+import { CyberDefence } from './pages/CyberDefence';
 
 // Initialize React Query client
 const queryClient = new QueryClient({
@@ -100,6 +101,9 @@ function App() {
                         <Route path="/threats" element={<ThreatCenter />} />
                         <Route path="/threat-center" element={<Navigate to="/threats" replace />} />
                         <Route path="/threat-intelligence" element={<ThreatIntelligence />} />
+                        <Route path="/cyber-defence" element={<CyberDefence />} />
+                        <Route path="/advisories" element={<Navigate to="/cyber-defence" replace />} />
+                        <Route path="/cert-in" element={<Navigate to="/cyber-defence" replace />} />
                         <Route path="/investigations" element={<Investigations />} />
                         <Route path="/investigations/:id" element={<Investigations />} />
                         <Route path="/security/threat-hunting" element={<ThreatHunting />} />
