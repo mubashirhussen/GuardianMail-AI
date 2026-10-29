@@ -15,7 +15,7 @@ import {
 export const Login: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, loginWithGoogle } = useAuth();
+  const { login, completeOTPLogin, loginWithGoogle } = useAuth();
 
   // Active Tab matching the reference: 'gmail' | 'signin' | 'new'
   const [activeTab, setActiveTab] = useState<'gmail' | 'signin' | 'new'>('signin');
@@ -28,6 +28,7 @@ export const Login: React.FC = () => {
 
   // Gmail Verify (OTP Challenge) state
   const [verifyEmail, setVerifyEmail] = useState('');
+  const [challengeId, setChallengeId] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [maskedDest, setMaskedDest] = useState('');
 
@@ -57,6 +58,9 @@ export const Login: React.FC = () => {
     if (err?.code === 'ERR_NETWORK' || err?.message === 'Network Error' || (!err?.response && err?.request)) {
       return 'Cannot connect to MailGuard authentication server. Please ensure the backend is running on port 8000.';
     }
+    if (err?.response?.status === 502 || err?.response?.status === 503) {
+      return 'MailGuard authentication service is temporarily unavailable or restarting. Please retry in a moment.';
+    }
     const detail = err?.response?.data?.detail;
     if (detail) {
       if (typeof detail === 'string') return detail;
@@ -66,7 +70,7 @@ export const Login: React.FC = () => {
     return err?.message || fallbackMessage;
   };
 
-  // Handle standard password sign-in
+  // Handle standard password sign-in (triggers mandatory 6-digit OTP challenge)
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password) {
@@ -78,8 +82,18 @@ export const Login: React.FC = () => {
     setLoading(true);
 
     try {
-      await login({ identifier: email.trim(), password });
-      navigate('/');
+      const res = await login({ identifier: email.trim(), password });
+      if (res?.status === 'otp_required') {
+        setVerifyEmail(res.email || email.trim());
+        setChallengeId(res.challenge_id || '');
+        setMaskedDest(res.destination || '');
+        setOtpSent(true);
+        setActiveTab('gmail');
+        const codeSuffix = res.code ? ` [Code: ${res.code}]` : '';
+        setSuccessMsg((res.message || `6-digit code dispatched to ${res.destination}`) + codeSuffix);
+      } else {
+        navigate('/');
+      }
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Incorrect email or password.'));
     } finally {
@@ -146,7 +160,8 @@ export const Login: React.FC = () => {
       const res = await authService.sendEmailCode(targetEmail, 'login_step_up');
       setMaskedDest(res.destination);
       setOtpSent(true);
-      setSuccessMsg(`6-digit code dispatched to ${res.destination}`);
+      const codeSuffix = res?.code ? ` [Code: ${res.code}]` : '';
+      setSuccessMsg((res?.message || `6-digit code dispatched to ${res.destination}`) + codeSuffix);
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to send verification code. Please check server configuration.'));
     } finally {
@@ -154,14 +169,19 @@ export const Login: React.FC = () => {
     }
   };
 
-  // Handle OTP verification completion
+  // Handle OTP verification completion for mandatory 2FA
   const handleVerifyOtpComplete = async (code: string) => {
     const targetEmail = (verifyEmail || email).trim();
     setError(null);
     setLoading(true);
 
     try {
-      await authService.verifyEmailCode(targetEmail, code, 'login_step_up');
+      const authRes = await authService.verifyLoginOTP({
+        email: targetEmail,
+        code,
+        challenge_id: challengeId,
+      });
+      await completeOTPLogin(authRes);
       navigate('/');
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Invalid or expired verification code.'));
@@ -175,8 +195,17 @@ export const Login: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      await loginWithGoogle(credential);
-      navigate('/');
+      const res = await loginWithGoogle(credential);
+      if (res?.status === 'otp_required') {
+        setVerifyEmail(res.email || '');
+        setChallengeId(res.challenge_id || '');
+        setMaskedDest(res.destination || '');
+        setOtpSent(true);
+        setActiveTab('gmail');
+        setSuccessMsg(res.message || `6-digit code dispatched to ${res.destination}`);
+      } else {
+        navigate('/');
+      }
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Google sign-in failed. Please try again.'));
     } finally {
@@ -290,7 +319,7 @@ export const Login: React.FC = () => {
                 type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="mubashirsk381@gmail.com"
+                placeholder="Email"
                 required
                 autoComplete="username"
                 className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
@@ -356,7 +385,7 @@ export const Login: React.FC = () => {
                     type="text"
                     value={verifyEmail || email}
                     onChange={(e) => setVerifyEmail(e.target.value)}
-                    placeholder="analyst@guardianmail.ai"
+                    placeholder="Email"
                     required
                     className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
                   />
@@ -386,13 +415,25 @@ export const Login: React.FC = () => {
                   error={error}
                   onResend={async () => {
                     const target = (verifyEmail || email).trim();
-                    await authService.sendEmailCode(target, 'login_step_up');
+                    if (challengeId) {
+                      const res = await authService.resendLoginOTP({ email: target, challenge_id: challengeId });
+                      const codeSuffix = res?.code ? ` [Code: ${res.code}]` : '';
+                      setSuccessMsg((res?.message || `New 6-digit code dispatched to ${maskedDest || target}`) + codeSuffix);
+                    } else {
+                      const res = await authService.sendEmailCode(target, 'login_step_up');
+                      const codeSuffix = res?.code ? ` [Code: ${res.code}]` : '';
+                      setSuccessMsg((res?.message || `New 6-digit code dispatched to ${maskedDest || target}`) + codeSuffix);
+                    }
                   }}
                 />
                 <div className="text-center pt-2">
                   <button
                     type="button"
-                    onClick={() => setOtpSent(false)}
+                    onClick={() => {
+                      setOtpSent(false);
+                      setActiveTab('signin');
+                      setError(null);
+                    }}
                     className="text-xs text-slate-400 hover:text-emerald-400 transition-colors font-mono"
                   >
                     ← Change destination address
@@ -430,7 +471,7 @@ export const Login: React.FC = () => {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="jane.doe@enterprise.com"
+                placeholder="Email"
                 required
                 className="w-full px-4 py-3 bg-[#080d19] border border-[#162238] rounded-xl text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition"
               />

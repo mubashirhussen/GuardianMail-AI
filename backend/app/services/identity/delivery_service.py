@@ -245,8 +245,9 @@ class IdentityDeliveryService:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Console email provider is strictly forbidden in production. Please configure Resend, SendGrid, or SMTP."
                 )
-            # In testing/dev, log safe notice
+            # In testing/dev, log clear dispatch notification with OTP
             logger.info(f"[DEV CONSOLE EMAIL] Verification challenge created for destination: {masked_dest} (Purpose: {purpose})")
+            logger.info(f"[DEV CONSOLE EMAIL] ---> 6-Digit OTP for {to_email}: [{code}] <--- (Valid for {settings.AUTH_CODE_TTL_SECONDS // 60} mins)")
             return {"provider": "console", "status": "sent", "destination": masked_dest}
 
         else:

@@ -34,7 +34,7 @@ export const Inbox: React.FC = () => {
     {
       id: '1',
       sender: 'security@paypal.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Urgent: Verify your account information',
       risk: 'High',
       category: 'Phishing',
@@ -51,7 +51,7 @@ export const Inbox: React.FC = () => {
     {
       id: '2',
       sender: 'noreply@amazon-secure.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Your Amazon account security alert',
       risk: 'High',
       category: 'Phishing',
@@ -67,7 +67,7 @@ export const Inbox: React.FC = () => {
     {
       id: '3',
       sender: 'admin@company.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Meeting notes and project update',
       risk: 'Low',
       category: 'Safe',
@@ -79,7 +79,7 @@ export const Inbox: React.FC = () => {
     {
       id: '4',
       sender: 'info@newsletter.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Weekly newsletter - May 2024',
       risk: 'Low',
       category: 'Safe',
@@ -91,7 +91,7 @@ export const Inbox: React.FC = () => {
     {
       id: '5',
       sender: 'hr@company.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Important HR Policy Update',
       risk: 'Medium',
       category: 'Spam',
@@ -103,7 +103,7 @@ export const Inbox: React.FC = () => {
     {
       id: '6',
       sender: 'billing@netflix.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Payment confirmation for Netflix',
       risk: 'Low',
       category: 'Safe',
@@ -115,7 +115,7 @@ export const Inbox: React.FC = () => {
     {
       id: '7',
       sender: 'support@microsoft.com',
-      recipient: user?.email || 'mubashir@example.com',
+      recipient: user?.email || 'user@guardianmail.ai',
       subject: 'Microsoft account security code',
       risk: 'Medium',
       category: 'Security',

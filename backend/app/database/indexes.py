@@ -39,7 +39,7 @@ async def initialize_all_indexes(db: AsyncIOMotorDatabase) -> None:
         await _safe_create_index(db["sessions"], [("expires_at", ASCENDING)], expireAfterSeconds=0)  # TTL index
         
         # 3. Devices collection
-        await _safe_create_index(db["devices"], [("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
+        await _safe_create_index(db["devices"], [("user_id", ASCENDING), ("fingerprint_hash", ASCENDING)], unique=True, sparse=True)
         
         # 4. Emails collection
         await db["emails"].create_index([("user_id", ASCENDING), ("date", DESCENDING)])

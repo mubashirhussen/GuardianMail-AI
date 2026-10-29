@@ -16,8 +16,8 @@ export const Devices: React.FC = () => {
   const [signingOut, setSigningOut] = useState(false);
   const [signedOutOther, setSignedOutOther] = useState(false);
 
-  const userName = user?.full_name?.split(' ')[0] || 'Mubashir';
-  const userEmail = user?.email || 'mubashirsk381@gmail.com';
+  const userName = user?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'User';
+  const userEmail = user?.email || 'user@guardianmail.ai';
 
   const handleSignOutOthers = async () => {
     setSigningOut(true);

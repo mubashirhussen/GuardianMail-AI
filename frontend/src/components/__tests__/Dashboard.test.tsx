@@ -9,8 +9,8 @@ import { dashboardService } from '../../services/dashboard';
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: {
-      email: 'mubashir@example.com',
-      full_name: 'Mubashir Hussain',
+      email: 'analyst@example.com',
+      full_name: 'Security Analyst',
     },
   }),
 }));
@@ -92,7 +92,7 @@ describe('Dashboard Component Unit Tests', () => {
   it('renders backend overview greeting and protection score', async () => {
     renderDashboard();
 
-    expect(await screen.findByText(/Welcome back, Mubashir/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Welcome back, Security/i)).toBeInTheDocument();
     expect(screen.getByText(/Live security posture/i)).toBeInTheDocument();
     expect(await screen.findByText(/Protection Score/i)).toBeInTheDocument();
     expect(await screen.findByText('94')).toBeInTheDocument();

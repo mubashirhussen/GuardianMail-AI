@@ -43,7 +43,7 @@ describe('Login Component Unit Tests', () => {
     expect(screen.getByText('GMAIL VERIFY')).toBeInTheDocument();
     expect(screen.getByText('SIGN IN')).toBeInTheDocument();
     expect(screen.getByText('NEW ACCOUNT')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('mubashirsk381@gmail.com')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Email')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('••••••••••••')).toBeInTheDocument();
     expect(screen.getByTestId('signin-submit-btn')).toBeInTheDocument();
   });
@@ -57,7 +57,7 @@ describe('Login Component Unit Tests', () => {
       </MemoryRouter>
     );
 
-    const emailInput = screen.getByPlaceholderText('mubashirsk381@gmail.com');
+    const emailInput = screen.getByPlaceholderText('Email');
     const passwordInput = screen.getByPlaceholderText('••••••••••••');
     const submitBtn = screen.getByTestId('signin-submit-btn');
 

@@ -28,11 +28,12 @@ class DeviceRepository(BaseRepository):
         ip_address: str
     ) -> Dict[str, Any]:
         """Register device or update last active time of a device."""
-        existing = await self.get_trusted_device(user_id, fingerprint_hash)
         now = datetime.now(timezone.utc)
+        device_id = fingerprint_hash or "default_device"
         
         device_data = {
             "user_id": user_id,
+            "device_id": device_id,
             "fingerprint_hash": fingerprint_hash,
             "device_name": device_name,
             "user_agent": user_agent,
@@ -40,18 +41,32 @@ class DeviceRepository(BaseRepository):
             "last_used_at": now
         }
         
-        if existing:
-            await self.collection.update_one(
-                {"_id": self._to_oid(existing["_id"])},
-                {"$set": device_data}
-            )
-            device_data["_id"] = existing["_id"]
-            device_data["is_trusted"] = existing.get("is_trusted", False)
-        else:
+        try:
+            existing = await self.get_trusted_device(user_id, fingerprint_hash)
+            if existing:
+                await self.collection.update_one(
+                    {"_id": self._to_oid(existing["_id"])},
+                    {"$set": device_data}
+                )
+                device_data["_id"] = existing["_id"]
+                device_data["is_trusted"] = existing.get("is_trusted", False)
+            else:
+                device_data["is_trusted"] = False
+                device_data["created_at"] = now
+                result = await self.collection.update_one(
+                    {"user_id": user_id, "fingerprint_hash": fingerprint_hash},
+                    {"$set": device_data, "$setOnInsert": {"created_at": now, "is_trusted": False}},
+                    upsert=True
+                )
+                if result.upserted_id:
+                    device_data["_id"] = str(result.upserted_id)
+                else:
+                    refreshed = await self.get_trusted_device(user_id, fingerprint_hash)
+                    device_data["_id"] = refreshed["_id"] if refreshed else fingerprint_hash
+        except Exception as e:
+            # Fallback defensively so device tracking never fails an authentication flow
+            device_data["_id"] = fingerprint_hash
             device_data["is_trusted"] = False
-            device_data["created_at"] = now
-            result = await self.collection.insert_one(device_data)
-            device_data["_id"] = str(result.inserted_id)
             
         return device_data
 

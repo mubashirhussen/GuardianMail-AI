@@ -5,7 +5,8 @@ import { authService } from '../services/auth';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (payload: any) => Promise<void>;
+  login: (payload: any) => Promise<any>;
+  completeOTPLogin: (data: { access_token: string; refresh_token: string; user?: any }) => Promise<void>;
   loginWithGoogle: (credential: string) => Promise<any>;
   register: (payload: any) => Promise<void>;
   logout: () => Promise<void>;
@@ -59,10 +60,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (payload: any) => {
-    const tokens = await authService.login(payload);
-    localStorage.setItem('access_token', tokens.access_token);
-    localStorage.setItem('token', tokens.access_token);
-    localStorage.setItem('refresh_token', tokens.refresh_token);
+    const res = await authService.login(payload);
+    if (res?.status === 'otp_required') {
+      return res;
+    }
+    if (res?.access_token) {
+      localStorage.setItem('access_token', res.access_token);
+      localStorage.setItem('token', res.access_token);
+      localStorage.setItem('refresh_token', res.refresh_token);
+      await refreshUser();
+    }
+    return res;
+  };
+
+  const completeOTPLogin = async (data: { access_token: string; refresh_token: string; user?: any }) => {
+    localStorage.setItem('access_token', data.access_token);
+    localStorage.setItem('token', data.access_token);
+    localStorage.setItem('refresh_token', data.refresh_token);
+    if (data.user) {
+      setUser(data.user);
+      localStorage.setItem('user_info', JSON.stringify(data.user));
+    }
     await refreshUser();
   };
 
@@ -109,6 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         loading,
         login,
+        completeOTPLogin,
         loginWithGoogle,
         register,
         logout,

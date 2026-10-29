@@ -110,10 +110,16 @@ async def login(
     request: Request,
     user_in: UserLogin,
     user_repo: UserRepository = Depends(get_user_repo),
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
     device_repo: DeviceRepository = Depends(get_device_repo),
     audit_repo: AuditRepository = Depends(get_audit_repo)
 ):
-    """Authenticate credentials (email or phone), verify account lockout, register session & fingerprinted device."""
+    """
+    Authenticate primary credentials (email/phone & password).
+    Enforces account lockout protections, creates a mandatory 6-digit OTP challenge,
+    dispatches the code to the verified destination, and returns a pending challenge.
+    Access to protected resources is strictly withheld until OTP verification succeeds.
+    """
     identifier = (user_in.identifier or user_in.email or user_in.phone_number or "").strip()
     if not identifier:
         raise HTTPException(
@@ -188,15 +194,96 @@ async def login(
             detail=detail
         )
         
-    # Reset failures on successful login
+    # Reset failures on successful primary authentication
     await user_repo.reset_login_attempts(identifier)
     
-    # Session & Device fingerprinting
+    # ─── MANDATORY 6-DIGIT OTP AUTHENTICATION CHALLENGE ──────────────────────
+    code = generate_secure_otp()
+    challenge = await verification_repo.create_challenge(
+        identifier=user["email"],
+        identifier_type="email",
+        purpose="login_2fa",
+        code=code,
+        user_id=str(user["_id"])
+    )
+    
+    # Dispatch real 6-digit OTP code to verified account email
+    try:
+        await IdentityDeliveryService.send_email(user["email"], code, "login_step_up")
+    except Exception as e:
+        logger.warning(f"Failed to dispatch 2FA email: {str(e)}")
+        
+    masked_dest = mask_identifier(user["email"])
+    logger.info(f"[DEV 2FA OTP DISPATCH] ---> 6-Digit OTP for {user['email']}: [{code}] <--- (Valid for 5 minutes)")
+    
+    # Record audit log for primary auth success and challenge issuance
+    await audit_repo.create({
+        "user_id": str(user["_id"]),
+        "action": "USER_LOGIN_PRIMARY_SUCCESS_OTP_DISPATCHED",
+        "details": {
+            "email": masked_dest,
+            "challenge_id": str(challenge["_id"])
+        },
+        "created_at": now
+    })
+    
+    dev_code = code if (settings.DEBUG or (settings.EMAIL_PROVIDER or "").lower() == "console" or settings.ENVIRONMENT == "development") else None
+    return {
+        "status": "otp_required",
+        "challenge_id": str(challenge["_id"]),
+        "destination": masked_dest,
+        "email": user["email"],
+        "method": "email",
+        "code": dev_code,
+        "message": f"6-digit code dispatched to {masked_dest}"
+    }
+
+class LoginOTPVerifyRequest(BaseModel):
+    challenge_id: Optional[str] = Field(default=None, description="Optional pending challenge ID")
+    email: str = Field(..., description="Target user email address")
+    code: str = Field(..., min_length=4, max_length=8, description="6-digit verification code")
+
+class LoginOTPResendRequest(BaseModel):
+    challenge_id: Optional[str] = Field(default=None, description="Optional pending challenge ID")
+    email: str = Field(..., description="Target user email address")
+
+@router.post("/otp/verify")
+@router.post("/login/verify-otp")
+@trace_span(name="auth_login_verify_otp")
+async def verify_login_otp(
+    request: Request,
+    payload: LoginOTPVerifyRequest,
+    user_repo: UserRepository = Depends(get_user_repo),
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    device_repo: DeviceRepository = Depends(get_device_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Verify 6-digit OTP for mandatory two-factor login challenge.
+    Enforces expiration, attempt limits, and single-use consumption before granting tokens.
+    """
+    clean_email = payload.email.strip().lower()
+    user = await user_repo.get_by_email(clean_email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account associated with this verification challenge not found."
+        )
+
+    # Verify code against pending challenge
+    success, msg = await verification_repo.verify_challenge(clean_email, "login_2fa", payload.code)
+    if not success:
+        # Also check fallback purpose in case user was in registration step-up
+        fb_success, fb_msg = await verification_repo.verify_challenge(clean_email, "login_step_up", payload.code)
+        if not fb_success:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+    # User identity is confirmed! Generate device registration & secure session tokens
+    now = datetime.now(timezone.utc)
     user_agent = request.headers.get("user-agent", "Unknown")
     ip_address = request.client.host if request.client else "127.0.0.1"
     fingerprint_hash = str(uuid.uuid5(uuid.NAMESPACE_DNS, user_agent + ip_address))
-    
-    # Register/Update device
+
     await device_repo.register_device(
         user_id=str(user["_id"]),
         fingerprint_hash=fingerprint_hash,
@@ -204,15 +291,11 @@ async def login(
         user_agent=user_agent,
         ip_address=ip_address
     )
-    
-    # Generate unique Token ID (jti)
+
     token_id = str(uuid.uuid4())
-    
-    # Generate tokens with unique session identifier jti
     access_token = create_access_token(subject=str(user["_id"]), jti=token_id)
     refresh_token = create_refresh_token(subject=str(user["_id"]), jti=token_id)
-    
-    # Record session
+
     await device_repo.create_session(
         user_id=str(user["_id"]),
         token_id=token_id,
@@ -220,25 +303,82 @@ async def login(
         ip_address=ip_address,
         user_agent=user_agent
     )
-    
-    # Audit log successful login
+
     await audit_repo.create({
         "user_id": str(user["_id"]),
-        "action": "USER_LOGIN_SUCCESS",
+        "action": "USER_LOGIN_2FA_SUCCESS",
         "details": {
-            "email": user["email"],
+            "email": clean_email,
             "ip_address": ip_address,
-            "user_agent": user_agent,
             "session_id": token_id
         },
         "created_at": now
     })
-    
+
+    user_dict = {
+        "_id": str(user["_id"]),
+        "id": str(user["_id"]),
+        "email": user["email"],
+        "full_name": user.get("full_name", ""),
+        "role": user.get("role", "user"),
+        "is_active": user.get("is_active", True),
+        "is_verified": True
+    }
+
     return {
+        "status": "authenticated",
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "role": user["role"]
+        "user": user_dict
+    }
+
+@router.post("/otp/resend")
+@trace_span(name="auth_login_otp_resend")
+async def resend_login_otp(
+    payload: LoginOTPResendRequest,
+    user_repo: UserRepository = Depends(get_user_repo),
+    verification_repo: VerificationRepository = Depends(get_verification_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """Resend 6-digit verification code with cooldown enforcement."""
+    clean_email = payload.email.strip().lower()
+    cooldown = await verification_repo.check_resend_cooldown(clean_email, "login_2fa")
+    if cooldown > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Please wait {cooldown} seconds before requesting a new code."
+        )
+
+    code = generate_secure_otp()
+    challenge = await verification_repo.create_challenge(
+        identifier=clean_email,
+        identifier_type="email",
+        purpose="login_2fa",
+        code=code
+    )
+
+    try:
+        await IdentityDeliveryService.send_email(clean_email, code, "login_step_up")
+    except Exception as e:
+        logger.warning(f"Resend email dispatch error: {e}")
+
+    logger.info(f"[DEV 2FA OTP DISPATCH] Resent 6-Digit OTP for {clean_email}: [{code}]")
+    masked = mask_identifier(clean_email)
+
+    await audit_repo.create({
+        "action": "AUTH_LOGIN_OTP_RESENT",
+        "details": {"destination": masked, "purpose": "login_2fa"},
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    dev_code = code if (settings.DEBUG or (settings.EMAIL_PROVIDER or "").lower() == "console" or settings.ENVIRONMENT == "development") else None
+    return {
+        "status": "sent",
+        "destination": masked,
+        "cooldown_seconds": settings.AUTH_RESEND_COOLDOWN_SECONDS,
+        "code": dev_code,
+        "message": f"6-digit code dispatched to {masked}"
     }
 
 @router.post("/logout")
@@ -511,11 +651,13 @@ async def email_send_code(
         "created_at": datetime.now(timezone.utc)
     })
 
+    dev_code = code if (settings.DEBUG or (settings.EMAIL_PROVIDER or "").lower() == "console" or settings.ENVIRONMENT == "development") else None
     return {
         "status": "sent",
         "destination": masked,
         "cooldown_seconds": settings.AUTH_RESEND_COOLDOWN_SECONDS,
-        "expires_in_seconds": settings.AUTH_CODE_TTL_SECONDS
+        "expires_in_seconds": settings.AUTH_CODE_TTL_SECONDS,
+        "code": dev_code
     }
 
 @router.post("/email/verify")
@@ -596,11 +738,13 @@ async def phone_send_code(
         "created_at": datetime.now(timezone.utc)
     })
 
+    dev_code = code if (settings.DEBUG or (settings.EMAIL_PROVIDER or "").lower() == "console" or settings.ENVIRONMENT == "development") else None
     return {
         "status": "sent",
         "destination": masked,
         "cooldown_seconds": settings.AUTH_RESEND_COOLDOWN_SECONDS,
-        "expires_in_seconds": settings.AUTH_CODE_TTL_SECONDS
+        "expires_in_seconds": settings.AUTH_CODE_TTL_SECONDS,
+        "code": dev_code
     }
 
 @router.post("/phone/verify")

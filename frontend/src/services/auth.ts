@@ -7,8 +7,18 @@ export const authService = {
     return response.data;
   },
 
-  async login(payload: any): Promise<{ access_token: string; refresh_token: string }> {
-    const response = await apiClient.post<{ access_token: string; refresh_token: string }>('/auth/login', payload);
+  async login(payload: any): Promise<any> {
+    const response = await apiClient.post<any>('/auth/login', payload);
+    return response.data;
+  },
+
+  async verifyLoginOTP(payload: { email: string; code: string; challenge_id?: string }): Promise<{ access_token: string; refresh_token: string; token_type?: string; user?: any }> {
+    const response = await apiClient.post<{ access_token: string; refresh_token: string; token_type?: string; user?: any }>('/auth/otp/verify', payload);
+    return response.data;
+  },
+
+  async resendLoginOTP(payload: { email: string; challenge_id?: string }): Promise<{ status: string; destination: string; message: string; cooldown_seconds?: number; code?: string }> {
+    const response = await apiClient.post<{ status: string; destination: string; message: string; cooldown_seconds?: number; code?: string }>('/auth/otp/resend', payload);
     return response.data;
   },
 
@@ -66,7 +76,7 @@ export const authService = {
     return response.data;
   },
 
-  async sendEmailCode(email: string, purpose: string = 'registration'): Promise<{ status: string; destination: string; cooldown_seconds: number; expires_in_seconds?: number }> {
+  async sendEmailCode(email: string, purpose: string = 'registration'): Promise<{ status: string; destination: string; cooldown_seconds: number; expires_in_seconds?: number; code?: string; message?: string }> {
     const response = await apiClient.post('/auth/email/send-code', { email, purpose });
     return response.data;
   },
@@ -76,7 +86,7 @@ export const authService = {
     return response.data;
   },
 
-  async sendPhoneCode(phoneNumber: string, purpose: string = 'phone_verification'): Promise<{ status: string; destination: string; cooldown_seconds: number; expires_in_seconds?: number }> {
+  async sendPhoneCode(phoneNumber: string, purpose: string = 'phone_verification'): Promise<{ status: string; destination: string; cooldown_seconds: number; expires_in_seconds?: number; code?: string; message?: string }> {
     const response = await apiClient.post('/auth/phone/send-code', { phone_number: phoneNumber, purpose });
     return response.data;
   },
