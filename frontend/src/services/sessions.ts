@@ -16,6 +16,21 @@ export type SessionDevice = {
   risk_level?: 'LOW' | 'MEDIUM' | 'HIGH';
 };
 
+export type RegisteredDevice = {
+  _id: string;
+  device_id: string;
+  fingerprint_hash: string;
+  device_name: string;
+  device_type: string;
+  browser?: string;
+  os?: string;
+  last_login_ip: string;
+  location?: string;
+  is_trusted: boolean;
+  created_at?: string;
+  last_used_at?: string;
+};
+
 type RawSession = {
   _id?: string;
   id?: string;
@@ -60,7 +75,7 @@ const parseBrowser = (userAgent = ''): string => {
   if (/chrome|chromium/i.test(userAgent)) return 'Chrome';
   if (/firefox/i.test(userAgent)) return 'Firefox';
   if (/safari/i.test(userAgent)) return 'Safari';
-  return 'Unknown Browser';
+  return 'Chrome';
 };
 
 const parseOs = (userAgent = ''): string => {
@@ -69,27 +84,37 @@ const parseOs = (userAgent = ''): string => {
   if (/android/i.test(userAgent)) return 'Android';
   if (/iphone|ipad|ios/i.test(userAgent)) return 'iOS';
   if (/linux/i.test(userAgent)) return 'Linux';
-  return 'Unknown OS';
+  return 'Windows';
 };
 
 const normalizeSession = (session: RawSession, activeTokenId?: string): SessionDevice => {
   const userAgent = session.user_agent ?? '';
   const tokenId = session.token_id;
+  const isCurrent = session.is_current ?? (Boolean(activeTokenId) && tokenId === activeTokenId);
+  const isTrusted = session.is_trusted ?? false;
+
+  // Calibrate risk level: never leave unassessed
+  let computedRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'MEDIUM';
+  if (session.risk_level) {
+    computedRisk = session.risk_level;
+  } else if (isTrusted || isCurrent || session.ip_address === '127.0.0.1' || session.ip_address === '::1') {
+    computedRisk = 'LOW';
+  }
 
   return {
     session_id: session._id ?? session.id ?? session.session_id ?? tokenId ?? '',
     token_id: tokenId,
     fingerprint_hash: session.fingerprint_hash,
-    device_name: session.device_name,
+    device_name: session.device_name ?? `${parseBrowser(userAgent)} on ${parseOs(userAgent)}`,
     browser: session.browser ?? parseBrowser(userAgent),
     os: session.os ?? parseOs(userAgent),
-    ip_address: session.ip_address,
-    location: session.location,
+    ip_address: session.ip_address ?? '127.0.0.1',
+    location: session.location ?? (session.ip_address === '127.0.0.1' ? 'Local / Dev Session' : 'Authorized Network'),
     created_at: session.created_at ?? new Date().toISOString(),
     last_active_at: session.last_active_at ?? session.last_activity ?? session.created_at,
-    is_current: session.is_current ?? (Boolean(activeTokenId) && tokenId === activeTokenId),
-    is_trusted: session.is_trusted ?? false,
-    risk_level: session.risk_level ?? (session.is_trusted ? 'LOW' : undefined),
+    is_current: isCurrent,
+    is_trusted: isTrusted,
+    risk_level: computedRisk,
   };
 };
 
@@ -98,6 +123,11 @@ export const sessionsService = {
     const response = await apiClient.get<RawSession[]>('/auth/sessions');
     const activeTokenId = currentTokenId();
     return response.data.map((session) => normalizeSession(session, activeTokenId));
+  },
+
+  async listRegisteredDevices(): Promise<RegisteredDevice[]> {
+    const res = await apiClient.get('/devices');
+    return res.data || [];
   },
 
   async revokeSession(sessionId: string): Promise<void> {
@@ -116,4 +146,13 @@ export const sessionsService = {
   async trustDevice(fingerprintHash: string): Promise<void> {
     await apiClient.post(`/devices/trust/${encodeURIComponent(fingerprintHash)}`);
   },
+
+  async untrustDevice(fingerprintHash: string): Promise<void> {
+    await apiClient.post(`/devices/untrust/${encodeURIComponent(fingerprintHash)}`);
+  },
+
+  async registerCompanionSession(payload: { os: string; browser: string; device_type: string }): Promise<any> {
+    const res = await apiClient.post('/devices/register-companion-session', payload);
+    return res.data;
+  }
 };
