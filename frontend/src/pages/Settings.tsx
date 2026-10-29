@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 
 export const Settings: React.FC = () => {
-  const { theme, toggleTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   
   // Local state for mock preferences
   const [emailAlerts, setEmailAlerts] = useState(true);
@@ -36,10 +36,10 @@ export const Settings: React.FC = () => {
               {/* Dark mode */}
               <button
                 type="button"
-                onClick={() => theme !== 'dark' && toggleTheme()}
+                onClick={() => setTheme('dark')}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition ${
                   theme === 'dark' 
-                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/40' 
+                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/40 shadow-sm' 
                     : 'bg-slate-950/40 border-slate-800 text-slate-500 hover:text-slate-350'
                 }`}
               >
@@ -50,10 +50,10 @@ export const Settings: React.FC = () => {
               {/* Light mode */}
               <button
                 type="button"
-                onClick={() => theme !== 'light' && toggleTheme()}
+                onClick={() => setTheme('light')}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition ${
                   theme === 'light' 
-                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/40' 
+                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/40 shadow-sm' 
                     : 'bg-slate-950/40 border-slate-800 text-slate-500 hover:text-slate-350'
                 }`}
               >
@@ -64,7 +64,12 @@ export const Settings: React.FC = () => {
               {/* System default */}
               <button
                 type="button"
-                className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-slate-950/40 border-slate-800 text-slate-500 hover:text-slate-350"
+                onClick={() => setTheme('system')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition ${
+                  theme === 'system'
+                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/40 shadow-sm'
+                    : 'bg-slate-950/40 border-slate-800 text-slate-500 hover:text-slate-350'
+                }`}
               >
                 <Laptop className="h-5 w-5" />
                 <span>System Sync</span>

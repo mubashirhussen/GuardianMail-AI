@@ -1,6 +1,6 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from bson import ObjectId
 from app.api.dependencies.auth import get_current_active_user
 from app.models.user import UserInDB
@@ -127,6 +127,42 @@ async def analyze_attachment_file(
     res = await db_manager.db["attachments"].insert_one(doc)
     analysis["id"] = str(res.inserted_id)
     analysis["attachment_id"] = str(res.inserted_id)
+    
+    # Mirror email files (.eml, .msg) directly into emails collection so they appear in Inbox
+    ext = os.path.splitext(sanitized_filename)[1].lower()
+    meta = analysis.get("embedded_metadata", {})
+    if ext in [".eml", ".msg"] or meta.get("subject"):
+        email_subj = meta.get("subject") or sanitized_filename
+        email_from = meta.get("from") or "sender@domain.com"
+        email_to = meta.get("to") or current_user.email
+        email_body = analysis.get("extracted_text") or f"Scanned email file: {sanitized_filename}"
+        
+        email_doc = {
+            "user_id": str(current_user.id),
+            "from_address": email_from,
+            "to_address": email_to,
+            "subject": email_subj,
+            "body_text": email_body,
+            "body_html": f"<pre>{email_body}</pre>",
+            "date": datetime.now(timezone.utc),
+            "processing_status": "completed",
+            "analysis": {
+                "verdict": verdict,
+                "risk_score": risk,
+                "confidence": 0.95,
+                "threat_types": [verdict.lower()] if verdict != "SAFE" else [],
+                "indicators": indicators,
+                "timestamp": now_iso
+            },
+            "source": "attachment_upload",
+            "attachment_id": str(res.inserted_id),
+            "filename": sanitized_filename
+        }
+        try:
+            await db_manager.db["emails"].insert_one(email_doc)
+        except Exception:
+            pass
+            
     return analysis
 
 @router.post("/ocr")
@@ -205,3 +241,32 @@ async def get_attachment_security_report(
         "extracted_text_preview": (analysis.get("extracted_text") or "")[:200],
         "qr_links": analysis.get("qr_links", [])
     }
+
+@router.get("/")
+async def list_attachments(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """Retrieve historical scanned attachments for the current user."""
+    if db_manager.db is None:
+        return []
+    cursor = db_manager.db["attachments"].find(
+        {"user_id": str(current_user.id)}
+    ).sort("created_at", -1).skip(skip).limit(limit)
+    recs = await cursor.to_list(length=limit)
+    results = []
+    for r in recs:
+        analysis = r.get("analysis", {})
+        created_val = r.get("created_at")
+        results.append({
+            "attachment_id": str(r["_id"]),
+            "filename": r.get("filename", "unknown"),
+            "file_size_bytes": r.get("file_size_bytes", 0),
+            "verdict": r.get("verdict", "SAFE"),
+            "risk_score": r.get("risk_score", 0),
+            "scan_timestamp": created_val.isoformat() if hasattr(created_val, "isoformat") else str(created_val),
+            "indicators": analysis.get("risk_indicators", []),
+            "analysis": analysis
+        })
+    return results

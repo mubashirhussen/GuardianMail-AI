@@ -19,6 +19,7 @@
     margin: 0;
     padding: 0;
     -webkit-font-smoothing: antialiased;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 }
 
@@ -27,16 +28,105 @@
   background-color: #0d1322;
   border: 1px solid #172136;
   border-radius: 0.875rem;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .cyber-card-subtle {
   background-color: #0a0e1a;
   border: 1px solid #141b2d;
   border-radius: 0.75rem;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .cyber-border {
   border-color: #172136;
+}
+
+/* =========================================================================
+   LIGHT THEME OVERRIDES (Modern Light)
+   ========================================================================= */
+html.light {
+  color-scheme: light;
+}
+
+html.light body {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* Main Dashboard layout background & text */
+html.light .min-h-screen,
+html.light [class*="bg-[#080c15]"] {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* Sidebars and headers */
+html.light aside,
+html.light header,
+html.light [class*="bg-[#0d1322]"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Card surfaces */
+html.light .cyber-card,
+html.light .cyber-card-subtle,
+html.light [class*="bg-slate-900"],
+html.light [class*="bg-slate-950"],
+html.light [class*="bg-[#0a0e1a]"],
+html.light [class*="bg-[#101625]"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+}
+
+html.light [class*="border-[#172136]"],
+html.light [class*="border-[#141b2d]"],
+html.light [class*="border-slate-800"],
+html.light [class*="border-slate-850"] {
+  border-color: #e2e8f0 !important;
+}
+
+/* Text overrides in light mode */
+html.light h1,
+html.light h2,
+html.light h3,
+html.light [class*="text-white"],
+html.light [class*="text-slate-50"],
+html.light [class*="text-slate-100"],
+html.light [class*="text-slate-200"] {
+  color: #0f172a !important;
+}
+
+html.light p,
+html.light [class*="text-slate-300"],
+html.light [class*="text-slate-400"] {
+  color: #475569 !important;
+}
+
+html.light [class*="text-slate-500"] {
+  color: #64748b !important;
+}
+
+/* Form inputs & controls */
+html.light input:not([type="checkbox"]),
+html.light select,
+html.light textarea,
+html.light [class*="bg-[#080d17]"] {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Table rows in light mode */
+html.light tr:hover {
+  background-color: #f8fafc !important;
 }
 
 /* Custom scrollbars */
@@ -53,6 +143,16 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #334155;
+}
+
+html.light ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 /* Top Accent Stripe */
