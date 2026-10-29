@@ -160,6 +160,39 @@ async def upload_evidence(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/grc/sync", response_model=Dict[str, Any])
+async def trigger_system_sync(
+    context: TenantContext = Depends(RequirePermission("compliance.manage"))
+):
+    """Trigger full system synchronization across telemetry, framework controls, and evidence."""
+    try:
+        return await grc_service.sync_system_data(context.organization_id, context.user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/grc/sync/status", response_model=Dict[str, Any])
+async def get_system_sync_status(
+    context: TenantContext = Depends(RequirePermission("compliance.read"))
+):
+    """Retrieve current synchronization health status and last sync time."""
+    try:
+        return await grc_service.get_sync_status(context.organization_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/grc/evidence/{id}/verify", response_model=Dict[str, Any])
+async def verify_evidence_hash(
+    id: str,
+    context: TenantContext = Depends(RequirePermission("compliance.read"))
+):
+    """Verify cryptographic SHA-256 seal integrity for a compliance evidence record."""
+    try:
+        return await grc_service.verify_evidence_integrity(context.organization_id, id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/grc/evidence/collect", response_model=List[Dict[str, Any]])
 async def trigger_evidence_collection(
     context: TenantContext = Depends(RequirePermission("compliance.manage"))

@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from app.config.settings import settings
 from app.security.password import hash_password, verify_password
@@ -408,14 +408,23 @@ async def logout(
             
     return {"detail": "Successfully logged out from current session"}
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: Optional[str] = Field(None, description="JWT refresh token")
+
 @router.post("/refresh")
 async def refresh_tokens(
-    refresh_token: str,
-    device_repo: DeviceRepository = Depends(get_device_repo)
+    payload_body: Optional[RefreshTokenRequest] = None,
+    refresh_token: Optional[str] = Query(None),
+    device_repo: DeviceRepository = Depends(get_device_repo),
+    user_repo: UserRepository = Depends(get_user_repo)
 ):
     """Rotate JWT credentials using the refresh token."""
+    token_str = (payload_body.refresh_token if payload_body and payload_body.refresh_token else None) or refresh_token
+    if not token_str:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Refresh token required.")
+
     try:
-        payload = await decode_token_async(refresh_token)
+        payload = await decode_token_async(token_str)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid or expired refresh token: {str(e)}")
         
@@ -425,8 +434,16 @@ async def refresh_tokens(
     user_id = payload.get("sub")
     jti = payload.get("jti")
     
+    # Verify user existence and account status
+    user = await user_repo.get_by_id(user_id)
+    if not user or not user.get("is_active", True):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account is inactive or disabled.")
+
     # Revoke old refresh token immediately by blacklisting old jti in Redis
-    await cache_manager.set(f"blacklist:{jti}", "1", 86400 * 30)
+    try:
+        await cache_manager.set(f"blacklist:{jti}", "1", 86400 * 30)
+    except Exception:
+        pass
     
     new_token_id = str(uuid.uuid4())
     new_access = create_access_token(subject=user_id, jti=new_token_id)

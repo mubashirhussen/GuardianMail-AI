@@ -76,13 +76,16 @@ apiClient.interceptors.response.use(
       }
 
       try {
-        // FastAPI treats the refresh_token parameter as a query value for this endpoint.
-        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, null, {
+        // FastAPI treats the refresh_token parameter as a query value or body payload
+        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+          refresh_token: refreshToken,
+        }, {
           params: { refresh_token: refreshToken },
         });
 
         const { access_token, refresh_token: new_refresh_token } = response.data;
         localStorage.setItem('access_token', access_token);
+        localStorage.setItem('token', access_token);
         if (new_refresh_token) {
           localStorage.setItem('refresh_token', new_refresh_token);
         }
@@ -108,6 +111,7 @@ apiClient.interceptors.response.use(
 
 function clearAuthAndRedirect() {
   localStorage.removeItem('access_token');
+  localStorage.removeItem('token');
   localStorage.removeItem('refresh_token');
   localStorage.removeItem('user_info');
   // Dispatch custom event to notify components/router to redirect

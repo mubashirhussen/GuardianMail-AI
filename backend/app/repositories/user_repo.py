@@ -7,6 +7,10 @@ class UserRepository(BaseRepository):
     def __init__(self, db: AsyncIOMotorDatabase):
         super().__init__(db, "users")
 
+    async def get_by_id(self, user_id: Any) -> Optional[Dict[str, Any]]:
+        """Fetch user record by ID."""
+        return await self.get(user_id)
+
     async def get_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Fetch user record by email."""
         query = self._apply_soft_delete_filter({"email": email.lower().strip()})

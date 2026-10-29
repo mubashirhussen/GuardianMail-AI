@@ -28,6 +28,10 @@ ROLE_PERMISSIONS = {
         "policies.simulate",
         "threat_intelligence.read",
         "threat_intelligence.hunt",
+        "compliance.read",
+        "compliance.manage",
+        "risks.read",
+        "risks.manage",
         "telemetry.read",
         "telemetry.manage",
         "response.read",
@@ -82,7 +86,9 @@ ROLE_PERMISSIONS = {
         "copilot.investigate",
         "copilot.hunt",
         "compliance.read",
+        "compliance.manage",
         "risks.read",
+        "risks.manage",
         "integrations.read",
         "telemetry.read",
         "telemetry.manage",
@@ -147,8 +153,12 @@ async def get_tenant_context(
     """FastAPI dependency to extract current user memberships, map permissions, and set the request tenant scope."""
     user_id = str(current_user.id or current_user.model_dump().get("_id"))
     
-    # Resolve organization_id parameter from path coordinates
-    organization_id = request.path_params.get("organization_id")
+    # Resolve organization_id parameter from path coordinates or request headers
+    organization_id = (
+        request.path_params.get("organization_id")
+        or request.headers.get("x-organization-id")
+        or request.headers.get("X-Organization-ID")
+    )
     
     if organization_id:
         membership = await org_membership_repo.get_by_user_and_org(user_id, organization_id)
