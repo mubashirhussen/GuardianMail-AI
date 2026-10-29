@@ -46,5 +46,10 @@ export const emailsService = {
   async getOcrResult(attachmentId: string): Promise<any> {
     const response = await apiClient.get(`/attachments/${attachmentId}`);
     return response.data;
+  },
+
+  async markSafe(id: string): Promise<any> {
+    const response = await apiClient.post(`/emails/${id}/mark-safe`);
+    return response.data;
   }
 };

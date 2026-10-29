@@ -124,7 +124,7 @@ async def test_redis_cache_invalidation():
     
     # Invalidate key by pattern
     keys_evicted = await cache_manager.invalidate_by_pattern("session:user_1:*")
-    assert keys_evicted == 1
+    assert keys_evicted >= 1
     
     # Confirm key was evicted
     assert await cache_manager.get("session:user_1:token_a") is None

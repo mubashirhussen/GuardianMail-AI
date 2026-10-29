@@ -89,7 +89,7 @@ const normalizeSession = (session: RawSession, activeTokenId?: string): SessionD
     last_active_at: session.last_active_at ?? session.last_activity ?? session.created_at,
     is_current: session.is_current ?? (Boolean(activeTokenId) && tokenId === activeTokenId),
     is_trusted: session.is_trusted ?? false,
-    risk_level: session.risk_level ?? (session.is_trusted ? 'LOW' : 'MEDIUM'),
+    risk_level: session.risk_level ?? (session.is_trusted ? 'LOW' : undefined),
   };
 };
 

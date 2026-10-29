@@ -125,7 +125,7 @@ function App() {
                         <Route path="/incidents" element={<Incidents />} />
                         <Route path="/incidents/:id" element={<IncidentDetail />} />
                         <Route path="/devices" element={<Sessions />} />
-                        <Route path="/sessions" element={<Sessions />} />
+                        <Route path="/sessions" element={<Navigate to="/devices" replace />} />
                         <Route path="/profile" element={<Profile />} />
                         <Route path="/settings" element={<Settings />} />
                         <Route path="/system-health" element={<SystemHealth />} />

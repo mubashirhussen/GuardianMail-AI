@@ -73,7 +73,12 @@ async def setup_opt_users(client: AsyncClient, setup_optimization_data):
     await db["organization_memberships"].insert_one({"organization_id": org_a, "user_id": str(user_a["_id"]), "role": "admin", "soft_delete": False})
     
     login_a = await client.post("/api/v1/auth/login", json={"email": "usera@opt.com", "password": "StrongPassword123!"})
-    headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
+    if login_a.json().get("status") == "otp_required":
+        verify_a = await client.post("/api/v1/auth/otp/verify", json={"email": "usera@opt.com", "code": login_a.json().get("code")})
+        token_a = verify_a.json()["access_token"]
+    else:
+        token_a = login_a.json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
 
     # Register admin user b for org b
     await client.post("/api/v1/auth/register", json={
@@ -87,7 +92,12 @@ async def setup_opt_users(client: AsyncClient, setup_optimization_data):
     await db["organization_memberships"].insert_one({"organization_id": org_b, "user_id": str(user_b["_id"]), "role": "admin", "soft_delete": False})
     
     login_b = await client.post("/api/v1/auth/login", json={"email": "userb@opt.com", "password": "StrongPassword123!"})
-    headers_b = {"Authorization": f"Bearer {login_b.json()['access_token']}"}
+    if login_b.json().get("status") == "otp_required":
+        verify_b = await client.post("/api/v1/auth/otp/verify", json={"email": "userb@opt.com", "code": login_b.json().get("code")})
+        token_b = verify_b.json()["access_token"]
+    else:
+        token_b = login_b.json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
 
     return {
         "headers_a": headers_a,

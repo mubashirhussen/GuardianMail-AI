@@ -130,7 +130,6 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
       title: 'ACCOUNT',
       items: [
         { name: 'Devices & Sessions', path: '/devices', icon: Laptop },
-        { name: 'Sessions', path: '/sessions', icon: ShieldCheck },
         { name: 'Settings', path: '/settings', icon: SettingsIcon },
       ],
     },

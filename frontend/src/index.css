@@ -88,25 +88,105 @@ html.light [class*="border-slate-850"] {
   border-color: #e2e8f0 !important;
 }
 
-/* Text overrides in light mode */
+/* Text overrides in light mode - targeted to avoid breaking badges and buttons */
 html.light h1,
 html.light h2,
 html.light h3,
-html.light [class*="text-white"],
-html.light [class*="text-slate-50"],
-html.light [class*="text-slate-100"],
-html.light [class*="text-slate-200"] {
+html.light h4,
+html.light h5,
+html.light h6 {
   color: #0f172a !important;
 }
 
-html.light p,
-html.light [class*="text-slate-300"],
-html.light [class*="text-slate-400"] {
+html.light p:not([class*="text-emerald"]):not([class*="text-red"]):not([class*="text-blue"]):not([class*="text-amber"]) {
   color: #475569 !important;
 }
 
-html.light [class*="text-slate-500"] {
+/* Headings and generic label containers in light mode */
+html.light .cyber-card h1,
+html.light .cyber-card h2,
+html.light .cyber-card h3,
+html.light .cyber-card .card-title,
+html.light .cyber-card [class*="text-slate-100"],
+html.light .cyber-card [class*="text-slate-200"],
+html.light .cyber-card [class*="text-white"]:not(button):not([role="button"]):not(.btn) {
+  color: #0f172a !important;
+}
+
+html.light .cyber-card [class*="text-slate-400"]:not(.badge) {
   color: #64748b !important;
+}
+
+/* Button & Action contrast protection */
+html.light button.text-white,
+html.light button[class*="text-white"],
+html.light button [class*="text-white"],
+html.light [class*="bg-[#2563eb]"],
+html.light [class*="bg-[#3978F6]"],
+html.light [class*="bg-blue-600"],
+html.light [class*="bg-[#10b981]"],
+html.light [class*="bg-emerald-600"] {
+  color: #ffffff !important;
+}
+html.light [class*="bg-[#2563eb]"] *,
+html.light [class*="bg-[#3978F6]"] *,
+html.light [class*="bg-blue-600"] * {
+  color: #ffffff !important;
+}
+
+/* Sidebar navigation active/inactive in light mode */
+html.light aside a[class*="bg-[#18233c]"],
+html.light aside a.active-nav-item {
+  background-color: #eef4ff !important;
+  border-color: #bfdbfe !important;
+  color: #1d4ed8 !important;
+}
+html.light aside a[class*="bg-[#18233c]"] svg,
+html.light aside a.active-nav-item svg {
+  color: #2563eb !important;
+}
+html.light aside a[class*="bg-[#18233c]"] span,
+html.light aside a.active-nav-item span {
+  color: #1d4ed8 !important;
+}
+html.light aside a:not([class*="bg-[#18233c]"]):hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* Sessions and Devices card contrast in light mode */
+html.light [class*="bg-[#0d1929]"],
+html.light .session-card-current {
+  background-color: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+html.light [class*="bg-[#0d1929]"] span:not([class*="bg-"]),
+html.light .session-card-current span:not([class*="bg-"]) {
+  color: #1e293b !important;
+}
+html.light [class*="bg-[#080d17]"],
+html.light .session-card-other {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+html.light [class*="bg-[#080d17]"] span:not([class*="bg-"]),
+html.light .session-card-other span:not([class*="bg-"]) {
+  color: #334155 !important;
+}
+
+/* Selected row in table (Inbox, scans, etc.) in light mode */
+html.light tr[class*="bg-[#151f33]"],
+html.light tr.selected-row {
+  background-color: #eff6ff !important;
+  border-left: 3px solid #3b82f6 !important;
+}
+html.light tr[class*="bg-[#151f33]"] td,
+html.light tr.selected-row td {
+  color: #0f172a !important;
+}
+html.light tr[class*="bg-[#151f33]"] td span,
+html.light tr.selected-row td span {
+  color: inherit;
 }
 
 /* Form inputs & controls */
