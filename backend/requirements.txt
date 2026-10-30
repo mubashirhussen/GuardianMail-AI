@@ -29,7 +29,6 @@ google-auth-httplib2>=0.2.0
 # Email Processing
 email-validator>=2.1.1
 python-magic>=0.4.27
-email-parser>=1.0.1
 
 # HTTP & API
 requests>=2.31.0
