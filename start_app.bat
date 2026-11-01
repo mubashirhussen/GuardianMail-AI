@@ -25,3 +25,4 @@ echo  - Backend API:        http://127.0.0.1:8000/docs
 echo ==========================================================
 timeout /t 5 >nul
 start http://localhost:3000
+

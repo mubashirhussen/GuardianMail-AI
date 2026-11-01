@@ -66,3 +66,11 @@ class UserRepository(BaseRepository):
                 "failed_login_attempts": 0,
                 "locked_until": None
             })
+
+    async def set_totp_secret(self, user_id: Any, secret: str) -> None:
+        """Store TOTP secret for Microsoft/Google Authenticator pairing."""
+        await self.update(user_id, {
+            "totp_secret": secret,
+            "mfa_secret": secret,
+            "mfa_enabled": True
+        })

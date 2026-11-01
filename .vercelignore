@@ -1,0 +1,9 @@
+# Ignore non-frontend directories during Vercel Frontend builds
+backend/
+docs/
+grafana/
+infrastructure/
+nginx/
+prometheus/
+scripts/
+*.bat

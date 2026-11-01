@@ -26,6 +26,7 @@ from app.services.identity.delivery_service import (
     normalize_phone_number,
     mask_identifier
 )
+from app.services.totp_service import TOTPService
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,108 @@ class LoginOTPResendRequest(BaseModel):
     challenge_id: Optional[str] = Field(default=None, description="Optional pending challenge ID")
     email: str = Field(..., description="Target user email address")
 
+class TOTPSetupRequest(BaseModel):
+    email: Optional[str] = Field(default=None, description="Target user email address")
+
+class TOTPEnableRequest(BaseModel):
+    email: str = Field(..., description="Target user email address")
+    secret: str = Field(..., description="Base32 TOTP secret")
+    code: str = Field(..., min_length=6, max_length=8, description="6-digit code from authenticator app")
+
+@router.get("/totp/setup")
+@router.post("/totp/setup")
+@trace_span(name="auth_totp_setup")
+async def setup_totp(
+    request: Request,
+    email: Optional[str] = Query(default=None),
+    payload: Optional[TOTPSetupRequest] = None,
+    user_repo: UserRepository = Depends(get_user_repo)
+):
+    """
+    Generate TOTP secret and QR code for Microsoft Authenticator / Google Authenticator.
+    Option A: Allows any user to pair their mobile authenticator app.
+    """
+    target_email = None
+    if payload and payload.email:
+        target_email = payload.email.strip()
+    elif email:
+        target_email = email.strip()
+
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User email is required to setup Microsoft / Google Authenticator."
+        )
+
+    clean_email = target_email.lower()
+    secret = TOTPService.generate_secret()
+    details = TOTPService.get_provisioning_details(
+        secret=secret,
+        account_name=clean_email,
+        issuer_name="MailGuard"
+    )
+
+    return {
+        "status": "ready",
+        "email": clean_email,
+        "secret": secret,
+        "provisioning_uri": details["provisioning_uri"],
+        "qr_code_base64": details["qr_code_base64"],
+        "app_links": {
+            "microsoft_authenticator_ios": "https://apps.apple.com/in/app/microsoft-authenticator/id983156458",
+            "microsoft_authenticator_android": "https://play.google.com/store/apps/details?id=com.azure.authenticator",
+            "google_authenticator_ios": "https://apps.apple.com/app/google-authenticator/id388497605",
+            "google_authenticator_android": "https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2"
+        },
+        "instructions": "Scan this QR code with Microsoft Authenticator or Google Authenticator, then enter the 6-digit code to activate."
+    }
+
+@router.post("/totp/enable")
+@trace_span(name="auth_totp_enable")
+async def enable_totp(
+    payload: TOTPEnableRequest,
+    user_repo: UserRepository = Depends(get_user_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo)
+):
+    """
+    Verify 6-digit TOTP code and permanently link Microsoft Authenticator to the user in MongoDB.
+    """
+    clean_email = payload.email.strip().lower()
+    clean_code = payload.code.strip()
+
+    # Verify TOTP code against secret
+    is_valid = TOTPService.verify_code(payload.secret, clean_code)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid 6-digit code. Please verify the code displayed in Microsoft Authenticator / Google Authenticator."
+        )
+
+    user = await user_repo.get_by_email(clean_email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User account '{clean_email}' not found."
+        )
+
+    await user_repo.set_totp_secret(str(user["_id"]), payload.secret)
+    await audit_repo.create({
+        "user_id": str(user["_id"]),
+        "action": "USER_MFA_TOTP_ENABLED",
+        "details": {
+            "email": clean_email,
+            "authenticator": "Microsoft/Google Authenticator",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        },
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {
+        "status": "success",
+        "message": "Microsoft / Google Authenticator configured successfully!",
+        "mfa_enabled": True
+    }
+
 @router.post("/otp/verify")
 @router.post("/login/verify-otp")
 @trace_span(name="auth_login_verify_otp")
@@ -260,6 +363,7 @@ async def verify_login_otp(
 ):
     """
     Verify 6-digit OTP for mandatory two-factor login challenge.
+    Supports Option A (Microsoft / Google Authenticator TOTP) as well as email challenge codes.
     Enforces expiration, attempt limits, and single-use consumption before granting tokens.
     """
     clean_email = payload.email.strip().lower()
@@ -270,13 +374,25 @@ async def verify_login_otp(
             detail="User account associated with this verification challenge not found."
         )
 
-    # Verify code against pending challenge
-    success, msg = await verification_repo.verify_challenge(clean_email, "login_2fa", payload.code)
-    if not success:
-        # Also check fallback purpose in case user was in registration step-up
-        fb_success, fb_msg = await verification_repo.verify_challenge(clean_email, "login_step_up", payload.code)
-        if not fb_success:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+    # 1. Option A: Check Microsoft / Google Authenticator TOTP if user configured it
+    code_verified = False
+    verification_method = "email_otp"
+    if user.get("totp_secret"):
+        if TOTPService.verify_code(user["totp_secret"], payload.code):
+            code_verified = True
+            verification_method = "totp_authenticator"
+
+    # 2. Check pending email verification challenge if not verified via TOTP
+    if not code_verified:
+        success, msg = await verification_repo.verify_challenge(clean_email, "login_2fa", payload.code)
+        if success:
+            code_verified = True
+        else:
+            fb_success, fb_msg = await verification_repo.verify_challenge(clean_email, "login_step_up", payload.code)
+            if fb_success:
+                code_verified = True
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg or "Invalid verification code.")
 
     # User identity is confirmed! Generate device registration & secure session tokens
     now = datetime.now(timezone.utc)

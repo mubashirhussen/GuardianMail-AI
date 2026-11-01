@@ -3,13 +3,15 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { ForgotPasswordModal } from '../components/ForgotPasswordModal';
+import { TOTPModal } from '../components/TOTPModal';
 import { OTPInput } from '../components/OTPInput';
 import { authService } from '../services/auth';
 import {
   Shield,
   Mail,
   UserCheck,
-  Loader2
+  Loader2,
+  Smartphone
 } from 'lucide-react';
 
 export const Login: React.FC = () => {
@@ -39,6 +41,7 @@ export const Login: React.FC = () => {
 
   // Forgot password modal
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
+  const [totpModalOpen, setTotpModalOpen] = useState(false);
 
   // Handle URL banner parameters (session_expired, logged_out, oauth errors)
   useEffect(() => {
@@ -426,7 +429,16 @@ export const Login: React.FC = () => {
                     }
                   }}
                 />
-                <div className="text-center pt-2">
+                <div className="flex flex-col items-center gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setTotpModalOpen(true)}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors font-mono flex items-center gap-1.5 py-1 px-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:border-emerald-500/50"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Pair Microsoft Authenticator (QR Code)</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -535,6 +547,16 @@ export const Login: React.FC = () => {
         isOpen={forgotModalOpen}
         onClose={() => setForgotModalOpen(false)}
         initialEmail={email}
+      />
+
+      {/* Microsoft / Google Authenticator Setup Modal */}
+      <TOTPModal
+        isOpen={totpModalOpen}
+        onClose={() => setTotpModalOpen(false)}
+        email={(verifyEmail || email).trim()}
+        onSuccess={() => {
+          setSuccessMsg('Microsoft Authenticator paired successfully! You can now enter the 6-digit code from your app.');
+        }}
       />
     </div>
   );

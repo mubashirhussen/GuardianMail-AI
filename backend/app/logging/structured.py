@@ -65,3 +65,8 @@ def setup_structured_logging(log_level: str = "INFO") -> None:
     # Suppress verbose third-party library logging if needed
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("motor").setLevel(logging.WARNING)
+    logging.getLogger("pymongo").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.command").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.connection").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.serverSelection").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.topology").setLevel(logging.WARNING)

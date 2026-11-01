@@ -106,6 +106,33 @@ export const authService = {
     return response.data;
   },
 
+  async getTOTPSetup(email: string): Promise<{
+    status: string;
+    email: string;
+    secret: string;
+    provisioning_uri: string;
+    qr_code_base64: string;
+    app_links: {
+      microsoft_authenticator_ios: string;
+      microsoft_authenticator_android: string;
+      google_authenticator_ios: string;
+      google_authenticator_android: string;
+    };
+    instructions: string;
+  }> {
+    const response = await apiClient.get('/auth/totp/setup', { params: { email } });
+    return response.data;
+  },
+
+  async enableTOTP(payload: { email: string; secret: string; code: string }): Promise<{
+    status: string;
+    message: string;
+    mfa_enabled: boolean;
+  }> {
+    const response = await apiClient.post('/auth/totp/enable', payload);
+    return response.data;
+  },
+
   async logoutAll(): Promise<void> {
     await apiClient.post('/auth/logout-all').catch(() => {});
     localStorage.removeItem('access_token');
