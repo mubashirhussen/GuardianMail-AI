@@ -4,7 +4,7 @@
   "private": true,
   "description": "GuardianMail AI - Enterprise Email Threat Analysis & Security Workspace",
   "scripts": {
-    "dev": "npm --prefix frontend run dev",
+    "dev": "concurrently -k -n \"BACKEND,FRONTEND\" -c \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:backend": "cd backend && python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
     "start:backend": "cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
@@ -13,5 +13,8 @@
     "preview": "npm --prefix frontend run preview",
     "test:frontend": "npm --prefix frontend run test:unit",
     "test:backend": "cd backend && python -m pytest tests/test_google_auth.py tests/test_identity_verification.py -v"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
   }
 }
